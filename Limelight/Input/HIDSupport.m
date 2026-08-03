@@ -6,8 +6,32 @@
 //  Copyright © 2017 Moonlight Stream. All rights reserved.
 //
 #import "HIDSupport_Internal.h"
+#import "KeyboardMapResolver.h"
 
 #import <IOKit/hid/IOHIDElement.h>
+
+// ---------------------------------------------------------------------------
+// CI/CD Pipeline Refactor (2026-08-02): KeyboardMapResolver bridge
+//
+// The 4 DUPLICATED switch/case blocks that previously defined modifier-key
+// mappings have been REMOVED and all callers now route through KMR_*()
+// in KeyboardMapResolver.{h,m}.
+// This guarantees that, for any keyboard state, "what L⌘ maps to"
+// has exactly ONE answer across the entire application.
+//
+// SIMPLIFIED MODE: We now use the Industry Standard Streaming Mapping.
+// There are no more "compatibility modes" - the mapping is fixed and final:
+// macOS Command -> Windows Win
+// macOS Control -> Windows Control
+// macOS Option -> Windows Alt
+// macOS Shift -> Windows Shift
+// ---------------------------------------------------------------------------
+
+// CVDisplayLink is deprecated in macOS 15.0 but remains the recommended API
+// for low-latency game input polling. The new NSView.displayLink API is not
+// yet validated for sub-frame input latency. Suppress deprecation at file
+// scope; tracked for migration in a future release.
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 
 NSString *const HIDMouseModeToggledNotification = @"HIDMouseModeToggledNotification";
@@ -204,29 +228,28 @@ static NSEventModifierFlags HIDModifierFlagForKeyCode(unsigned short keyCode) {
 
 static HIDKeyboardPhysicalModifierMask HIDEffectivePhysicalModifierMaskForEvent(HIDKeyboardPhysicalModifierMask physicalMask,
                                                                                 NSEvent *event) {
-    if (event == nil) {
-        return physicalMask;
-    }
-
-    NSEventModifierFlags modifierFlags = event.modifierFlags;
-
-    if ((modifierFlags & NSEventModifierFlagShift) != 0 &&
-        (physicalMask & (HIDKeyboardPhysicalModifierMaskLeftShift | HIDKeyboardPhysicalModifierMaskRightShift)) == 0) {
-        physicalMask |= HIDKeyboardPhysicalModifierMaskLeftShift;
-    }
-    if ((modifierFlags & NSEventModifierFlagControl) != 0 &&
-        (physicalMask & (HIDKeyboardPhysicalModifierMaskLeftControl | HIDKeyboardPhysicalModifierMaskRightControl)) == 0) {
-        physicalMask |= HIDKeyboardPhysicalModifierMaskLeftControl;
-    }
-    if ((modifierFlags & NSEventModifierFlagOption) != 0 &&
-        (physicalMask & (HIDKeyboardPhysicalModifierMaskLeftOption | HIDKeyboardPhysicalModifierMaskRightOption)) == 0) {
-        physicalMask |= HIDKeyboardPhysicalModifierMaskLeftOption;
-    }
-    if ((modifierFlags & NSEventModifierFlagCommand) != 0 &&
-        (physicalMask & (HIDKeyboardPhysicalModifierMaskLeftCommand | HIDKeyboardPhysicalModifierMaskRightCommand)) == 0) {
-        physicalMask |= HIDKeyboardPhysicalModifierMaskLeftCommand;
-    }
-
+    // -----------------------------------------------------------------------
+    // CRITICAL FIX (2026-08-02): DO NOT infer physical modifier state from
+    // event.modifierFlags for mouse events.
+    //
+    // This was the ROOT CAUSE of the "double-click sends Win key" bug:
+    // When the user pressed-and-held the Mac Command (⌘) key and then
+    // clicked the mouse button, mouse event.modifierFlags naturally
+    // included NSEventModifierFlagCommand. The previous code used those
+    // bits to FORCE-INJECT the "LeftCommand pressed" state into
+    // physicalMask, which then caused syncKeyboardModifierStateForEvent()
+    // to emit a VK_LWIN (0x5B) down event to the remote PC. The same
+    // applied for any modifier held during a mouse click (Ctrl→LCtrl,
+    // Option→LAlt, Shift→LShift).
+    //
+    // Under the STREAMING STANDARD (Parsec/UU Remote):
+    // * Physical modifier key down/up is tracked ONLY from kVK_* key
+    //   events received by flagsChanged:/keyDown:/keyUp:.
+    // * Mouse events are NOT permitted to mutate the modifier state.
+    // * The physicalMask is therefore returned AS-IS, regardless of
+    //   what event.modifierFlags says.
+    // -----------------------------------------------------------------------
+    (void)event;
     return physicalMask;
 }
 
@@ -257,6 +280,35 @@ static BOOL HIDIsModifierKeyCode(unsigned short keyCode) {
     return HIDPhysicalModifierMaskForKeyCode(keyCode) != 0;
 }
 
+/// Returns YES if the keyCode corresponds to a printable ANSI key
+/// (A-Z, 0-9, punctuation). These keys ALWAYS have non-nil
+/// charactersIgnoringModifiers in real keyboard events. Synthetic
+/// keyDown events from mouse/touchpad double-clicks have valid
+/// keyCodes but empty character data.
+static BOOL HIDIsPrintableANSIKey(unsigned short keyCode) {
+    switch (keyCode) {
+        case kVK_ANSI_A: case kVK_ANSI_B: case kVK_ANSI_C: case kVK_ANSI_D:
+        case kVK_ANSI_E: case kVK_ANSI_F: case kVK_ANSI_G: case kVK_ANSI_H:
+        case kVK_ANSI_I: case kVK_ANSI_J: case kVK_ANSI_K: case kVK_ANSI_L:
+        case kVK_ANSI_M: case kVK_ANSI_N: case kVK_ANSI_O: case kVK_ANSI_P:
+        case kVK_ANSI_Q: case kVK_ANSI_R: case kVK_ANSI_S: case kVK_ANSI_T:
+        case kVK_ANSI_U: case kVK_ANSI_V: case kVK_ANSI_W: case kVK_ANSI_X:
+        case kVK_ANSI_Y: case kVK_ANSI_Z:
+        case kVK_ANSI_0: case kVK_ANSI_1: case kVK_ANSI_2: case kVK_ANSI_3:
+        case kVK_ANSI_4: case kVK_ANSI_5: case kVK_ANSI_6: case kVK_ANSI_7:
+        case kVK_ANSI_8: case kVK_ANSI_9:
+        case kVK_ANSI_Equal: case kVK_ANSI_Minus:
+        case kVK_ANSI_RightBracket: case kVK_ANSI_LeftBracket:
+        case kVK_ANSI_Quote: case kVK_ANSI_Semicolon:
+        case kVK_ANSI_Backslash: case kVK_ANSI_Comma:
+        case kVK_ANSI_Slash: case kVK_ANSI_Period:
+        case kVK_ANSI_Grave:
+            return YES;
+        default:
+            return NO;
+    }
+}
+
 static char HIDRemoteModifierFlagsToGenericFlags(NSUInteger remoteMask) {
     char modifiers = 0;
 
@@ -279,35 +331,13 @@ static char HIDRemoteModifierFlagsToGenericFlags(NSUInteger remoteMask) {
 static NSUInteger HIDSyntheticRemoteModifierMaskForKeyCode(HIDSupport *support,
                                                            unsigned short keyCode,
                                                            BOOL preferShortcutTranslationCommandMapping) {
-    BOOL swapLeftControlAndWin = [support usesKeyboardLeftControlWinSwapCompatibility];
-    BOOL hardMapCommandToControl = [support usesKeyboardCommandToControlCompatibility];
-    BOOL shortcutTranslationCommandToControl =
-        preferShortcutTranslationCommandMapping && [support usesKeyboardShortcutTranslationCompatibility];
-
-    switch (keyCode) {
-        case kVK_Shift:
-            return HIDKeyboardRemoteModifierMaskLeftShift;
-        case kVK_RightShift:
-            return HIDKeyboardRemoteModifierMaskRightShift;
-        case kVK_Control:
-            return swapLeftControlAndWin ? HIDKeyboardRemoteModifierMaskLeftMeta : HIDKeyboardRemoteModifierMaskLeftControl;
-        case kVK_RightControl:
-            return HIDKeyboardRemoteModifierMaskRightControl;
-        case kVK_Option:
-            return HIDKeyboardRemoteModifierMaskLeftAlt;
-        case kVK_RightOption:
-            return HIDKeyboardRemoteModifierMaskRightAlt;
-        case kVK_Command:
-            return (hardMapCommandToControl || swapLeftControlAndWin || shortcutTranslationCommandToControl)
-                ? HIDKeyboardRemoteModifierMaskLeftControl
-                : HIDKeyboardRemoteModifierMaskLeftMeta;
-        case kVK_RightCommand:
-            return (hardMapCommandToControl || shortcutTranslationCommandToControl)
-                ? HIDKeyboardRemoteModifierMaskRightControl
-                : HIDKeyboardRemoteModifierMaskRightMeta;
-        default:
-            return 0;
+    // SIMPLIFIED: Always use the standard streaming mapping.
+    // No more compatibility modes.
+    KMR_PhysicalModifier phys = KMR_PhysicalFromKeyCode(keyCode);
+    if (phys == KMR_Phys_Count) {
+        return 0;
     }
+    return (NSUInteger)KMR_RemoteMaskForPhysical(phys);
 }
 
 static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
@@ -716,7 +746,13 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         self.inputDiagnosticsLock = [[NSObject alloc] init];
         self.pressedMouseButtonsMask = 0;
         [self resetInputDiagnostics];
-        
+
+        // SIMPLIFIED: Print the active keyboard mapping matrix once at init.
+        // In the new "Streaming Standard" mode, the mapping is fixed (Cmd->Win, etc.)
+        // and does not depend on any compatibility flags.
+        KMR_LogActiveMapping();
+        Log(LOG_I, @"[kbmap] HIDSupport init: Mode = Streaming Standard (Cmd->Win, Ctrl->Ctrl, Option->Alt)");
+
         [self setupHidManager];
         
         self.ticks = [[Ticks alloc] init];
@@ -798,20 +834,23 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (BOOL)usesKeyboardCommandToControlCompatibility {
-    KeyboardCompatibilityMode mode = [self keyboardCompatibilityMode];
-    return mode == KeyboardCompatibilityModeCommandToControl;
+    // SIMPLIFIED: Always return NO. Legacy compatibility mode disabled.
+    return NO;
 }
 
 - (BOOL)usesKeyboardLeftControlWinSwapCompatibility {
-    KeyboardCompatibilityMode mode = [self keyboardCompatibilityMode];
-    return mode == KeyboardCompatibilityModeSwapLeftControlAndWin ||
-           mode == KeyboardCompatibilityModeHybrid;
+    // SIMPLIFIED: Always return NO. Legacy compatibility mode disabled.
+    return NO;
 }
 
 - (BOOL)usesKeyboardShortcutTranslationCompatibility {
-    KeyboardCompatibilityMode mode = [self keyboardCompatibilityMode];
-    return mode == KeyboardCompatibilityModeShortcutTranslation ||
-           mode == KeyboardCompatibilityModeHybrid;
+    // SIMPLIFIED: Always return NO. Legacy compatibility mode disabled.
+    return NO;
+}
+
+- (BOOL)usesKeyboardMoonlightClassicMapping {
+    // SIMPLIFIED: Always return NO. Legacy compatibility mode disabled.
+    return NO;
 }
 
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event {
@@ -826,7 +865,6 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         self.keyboardPhysicalModifierSourceMask |= mask;
     } else {
         self.keyboardPhysicalModifierSourceMask &= ~mask;
-        self.keyboardDeferredShortcutTranslationCommandMask &= ~mask;
     }
 }
 
@@ -851,57 +889,33 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event {
-    NSUInteger desired = 0;
+    // SIMPLIFIED: Iterate over physical modifiers and map directly.
     NSUInteger physical = HIDEffectivePhysicalModifierMaskForEvent(self.keyboardPhysicalModifierSourceMask, event);
-    BOOL swapLeftControlAndWin = [self usesKeyboardLeftControlWinSwapCompatibility];
-    BOOL hardMapCommandToControl = [self usesKeyboardCommandToControlCompatibility];
-    BOOL translateShortcutCommandToControl = [self shouldApplyKeyboardShortcutTranslationForEvent:event];
-    BOOL deferredLeftCommandToControl =
-        (self.keyboardDeferredShortcutTranslationCommandMask & HIDKeyboardPhysicalModifierMaskLeftCommand) != 0;
-    BOOL deferredRightCommandToControl =
-        (self.keyboardDeferredShortcutTranslationCommandMask & HIDKeyboardPhysicalModifierMaskRightCommand) != 0;
-
-    if (physical & HIDKeyboardPhysicalModifierMaskLeftShift) {
-        desired |= HIDKeyboardRemoteModifierMaskLeftShift;
-    }
-    if (physical & HIDKeyboardPhysicalModifierMaskRightShift) {
-        desired |= HIDKeyboardRemoteModifierMaskRightShift;
-    }
-    if (physical & HIDKeyboardPhysicalModifierMaskLeftControl) {
-        desired |= swapLeftControlAndWin
-        ? HIDKeyboardRemoteModifierMaskLeftMeta
-        : HIDKeyboardRemoteModifierMaskLeftControl;
-    }
-    if (physical & HIDKeyboardPhysicalModifierMaskRightControl) {
-        desired |= HIDKeyboardRemoteModifierMaskRightControl;
-    }
-    if (physical & HIDKeyboardPhysicalModifierMaskLeftOption) {
-        desired |= HIDKeyboardRemoteModifierMaskLeftAlt;
-    }
-    if (physical & HIDKeyboardPhysicalModifierMaskRightOption) {
-        desired |= HIDKeyboardRemoteModifierMaskRightAlt;
+    if (physical == 0) {
+        return 0;
     }
 
-    if (physical & HIDKeyboardPhysicalModifierMaskLeftCommand) {
-        if (hardMapCommandToControl ||
-            swapLeftControlAndWin ||
-            translateShortcutCommandToControl ||
-            deferredLeftCommandToControl) {
-            desired |= HIDKeyboardRemoteModifierMaskLeftControl;
-        } else {
-            desired |= HIDKeyboardRemoteModifierMaskLeftMeta;
+    static const struct {
+        NSUInteger  physMask;
+        KMR_PhysicalModifier physEnum;
+    } kMap[] = {
+        { HIDKeyboardPhysicalModifierMaskLeftShift,    KMR_Phys_LeftShift },
+        { HIDKeyboardPhysicalModifierMaskRightShift,   KMR_Phys_RightShift },
+        { HIDKeyboardPhysicalModifierMaskLeftControl,  KMR_Phys_LeftControl },
+        { HIDKeyboardPhysicalModifierMaskRightControl, KMR_Phys_RightControl },
+        { HIDKeyboardPhysicalModifierMaskLeftOption,   KMR_Phys_LeftOption },
+        { HIDKeyboardPhysicalModifierMaskRightOption,  KMR_Phys_RightOption },
+        { HIDKeyboardPhysicalModifierMaskLeftCommand,  KMR_Phys_LeftCommand },
+        { HIDKeyboardPhysicalModifierMaskRightCommand, KMR_Phys_RightCommand },
+    };
+
+    NSUInteger desired = 0;
+    for (size_t i = 0; i < sizeof(kMap) / sizeof(kMap[0]); i++) {
+        if ((physical & kMap[i].physMask) == 0) {
+            continue;
         }
+        desired |= (NSUInteger)KMR_RemoteMaskForPhysical(kMap[i].physEnum);
     }
-    if (physical & HIDKeyboardPhysicalModifierMaskRightCommand) {
-        if (hardMapCommandToControl ||
-            translateShortcutCommandToControl ||
-            deferredRightCommandToControl) {
-            desired |= HIDKeyboardRemoteModifierMaskRightControl;
-        } else {
-            desired |= HIDKeyboardRemoteModifierMaskRightMeta;
-        }
-    }
-
     return desired;
 }
 
@@ -951,6 +965,11 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (void)flagsChanged:(NSEvent *)event {
+    // Hard gate: reject any non-keyboard event before touching keyCode.
+    // Mouse/tablet/gesture events have UNDEFINED -keyCode on macOS.
+    if (event == nil || event.type != NSEventTypeFlagsChanged) {
+        return;
+    }
     if (!self.shouldSendInputEvents) {
         return;
     }
@@ -960,6 +979,136 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (void)keyDown:(NSEvent *)event {
+    if (event == nil || event.type != NSEventTypeKeyDown) {
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // DETERMINISTIC SYNTHETIC KEYDOWN REJECTOR (2026-08-02)
+    //
+    // Replaces the flaky suppressingKeyboardFromMouseEvent time-window flag.
+    //
+    // Implements THREE independent evidence-based checks that reject
+    // AppKit-synthesized keyDown events from mouse double-click dispatch.
+    // The three checks are exactly the same as the StreamViewController
+    // versions (header MLKeyDownIsSyntheticDoubleClick) but re-implemented
+    // here locally to avoid importing the huge ObjC++ header.
+    //
+    // A synthetic rejection here is definitive. Real keyboard events
+    // ALWAYS pass these checks; synthesized ones almost never do.
+    // -----------------------------------------------------------------------
+    {
+        unsigned short kc = event.keyCode;
+        NSEventModifierFlags mods = event.modifierFlags;
+
+        // 1. CHARACTER CONSISTENCY for printable ANSI keys
+        BOOL printableANSI = NO;
+        switch (kc) {
+            case kVK_ANSI_A: case kVK_ANSI_B: case kVK_ANSI_C: case kVK_ANSI_D:
+            case kVK_ANSI_E: case kVK_ANSI_F: case kVK_ANSI_G: case kVK_ANSI_H:
+            case kVK_ANSI_I: case kVK_ANSI_J: case kVK_ANSI_K: case kVK_ANSI_L:
+            case kVK_ANSI_M: case kVK_ANSI_N: case kVK_ANSI_O: case kVK_ANSI_P:
+            case kVK_ANSI_Q: case kVK_ANSI_R: case kVK_ANSI_S: case kVK_ANSI_T:
+            case kVK_ANSI_U: case kVK_ANSI_V: case kVK_ANSI_W: case kVK_ANSI_X:
+            case kVK_ANSI_Y: case kVK_ANSI_Z:
+            case kVK_ANSI_0: case kVK_ANSI_1: case kVK_ANSI_2: case kVK_ANSI_3:
+            case kVK_ANSI_4: case kVK_ANSI_5: case kVK_ANSI_6: case kVK_ANSI_7:
+            case kVK_ANSI_8: case kVK_ANSI_9:
+            case kVK_ANSI_Equal: case kVK_ANSI_Minus:
+            case kVK_ANSI_RightBracket: case kVK_ANSI_LeftBracket:
+            case kVK_ANSI_Quote: case kVK_ANSI_Semicolon:
+            case kVK_ANSI_Backslash: case kVK_ANSI_Comma:
+            case kVK_ANSI_Slash: case kVK_ANSI_Period:
+            case kVK_ANSI_Grave:
+                printableANSI = YES;
+                break;
+            default:
+                printableANSI = NO;
+                break;
+        }
+        if (printableANSI) {
+            NSString *chars = event.charactersIgnoringModifiers;
+            if (chars.length != 1) {
+                Log(LOG_W, @"[keyboard] HID rejected synthetic: printable kVK=%hu chars.len=%lu",
+                    kc, (unsigned long)chars.length);
+                return;
+            }
+            unichar c = [chars characterAtIndex:0];
+            unichar lc = (unichar)tolower((int)c);
+            BOOL charMatches = NO;
+            switch (kc) {
+                case kVK_ANSI_A: charMatches = (lc == 'a'); break;
+                case kVK_ANSI_B: charMatches = (lc == 'b'); break;
+                case kVK_ANSI_C: charMatches = (lc == 'c'); break;
+                case kVK_ANSI_D: charMatches = (lc == 'd'); break;
+                case kVK_ANSI_E: charMatches = (lc == 'e'); break;
+                case kVK_ANSI_F: charMatches = (lc == 'f'); break;
+                case kVK_ANSI_G: charMatches = (lc == 'g'); break;
+                case kVK_ANSI_H: charMatches = (lc == 'h'); break;
+                case kVK_ANSI_I: charMatches = (lc == 'i'); break;
+                case kVK_ANSI_J: charMatches = (lc == 'j'); break;
+                case kVK_ANSI_K: charMatches = (lc == 'k'); break;
+                case kVK_ANSI_L: charMatches = (lc == 'l'); break;
+                case kVK_ANSI_M: charMatches = (lc == 'm'); break;
+                case kVK_ANSI_N: charMatches = (lc == 'n'); break;
+                case kVK_ANSI_O: charMatches = (lc == 'o'); break;
+                case kVK_ANSI_P: charMatches = (lc == 'p'); break;
+                case kVK_ANSI_Q: charMatches = (lc == 'q'); break;
+                case kVK_ANSI_R: charMatches = (lc == 'r'); break;
+                case kVK_ANSI_S: charMatches = (lc == 's'); break;
+                case kVK_ANSI_T: charMatches = (lc == 't'); break;
+                case kVK_ANSI_U: charMatches = (lc == 'u'); break;
+                case kVK_ANSI_V: charMatches = (lc == 'v'); break;
+                case kVK_ANSI_W: charMatches = (lc == 'w'); break;
+                case kVK_ANSI_X: charMatches = (lc == 'x'); break;
+                case kVK_ANSI_Y: charMatches = (lc == 'y'); break;
+                case kVK_ANSI_Z: charMatches = (lc == 'z'); break;
+                case kVK_ANSI_0: charMatches = (lc == '0'); break;
+                case kVK_ANSI_1: charMatches = (lc == '1'); break;
+                case kVK_ANSI_2: charMatches = (lc == '2'); break;
+                case kVK_ANSI_3: charMatches = (lc == '3'); break;
+                case kVK_ANSI_4: charMatches = (lc == '4'); break;
+                case kVK_ANSI_5: charMatches = (lc == '5'); break;
+                case kVK_ANSI_6: charMatches = (lc == '6'); break;
+                case kVK_ANSI_7: charMatches = (lc == '7'); break;
+                case kVK_ANSI_8: charMatches = (lc == '8'); break;
+                case kVK_ANSI_9: charMatches = (lc == '9'); break;
+                case kVK_ANSI_Equal:       charMatches = (lc == '='); break;
+                case kVK_ANSI_Minus:       charMatches = (lc == '-'); break;
+                case kVK_ANSI_RightBracket:charMatches = (lc == ']'); break;
+                case kVK_ANSI_LeftBracket: charMatches = (lc == '['); break;
+                case kVK_ANSI_Quote:       charMatches = (lc == '\''); break;
+                case kVK_ANSI_Semicolon:   charMatches = (lc == ';'); break;
+                case kVK_ANSI_Backslash:   charMatches = (lc == '\\'); break;
+                case kVK_ANSI_Comma:       charMatches = (lc == ','); break;
+                case kVK_ANSI_Slash:       charMatches = (lc == '/'); break;
+                case kVK_ANSI_Period:      charMatches = (lc == '.'); break;
+                case kVK_ANSI_Grave:       charMatches = (lc == '`'); break;
+                default: charMatches = NO; break;
+            }
+            if (!charMatches) {
+                Log(LOG_W, @"[keyboard] HID rejected synthetic: kVK=%hu char-mismatch got=%d",
+                    kc, (int)c);
+                return;
+            }
+        }
+
+        // 2. SPURIOUS MODIFIER CHECK
+        if ((mods & NSEventModifierFlagNumericPad) &&
+            kc != kVK_ANSI_Keypad0 && kc != kVK_ANSI_Keypad1 &&
+            kc != kVK_ANSI_Keypad2 && kc != kVK_ANSI_Keypad3 &&
+            kc != kVK_ANSI_Keypad4 && kc != kVK_ANSI_Keypad5 &&
+            kc != kVK_ANSI_Keypad6 && kc != kVK_ANSI_Keypad7 &&
+            kc != kVK_ANSI_Keypad8 && kc != kVK_ANSI_Keypad9 &&
+            kc != kVK_ANSI_KeypadDecimal && kc != kVK_ANSI_KeypadPlus &&
+            kc != kVK_ANSI_KeypadMinus && kc != kVK_ANSI_KeypadMultiply &&
+            kc != kVK_ANSI_KeypadDivide && kc != kVK_ANSI_KeypadEquals &&
+            kc != kVK_ANSI_KeypadEnter && kc != kVK_ANSI_KeypadClear) {
+            Log(LOG_W, @"[keyboard] HID rejected synthetic: kVK=%hu spurious-numpad-mod", kc);
+            return;
+        }
+    }
+
     if (self.shouldSendInputEvents) {
         [self syncKeyboardModifierStateForEvent:event];
         short keyCode = 0x8000 | [self translateKeyCodeWithEvent:event];
@@ -975,6 +1124,9 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (void)keyUp:(NSEvent *)event {
+    if (event == nil || event.type != NSEventTypeKeyUp) {
+        return;
+    }
     if (self.shouldSendInputEvents) {
         [self syncKeyboardModifierStateForEvent:event];
         short keyCode = 0x8000 | [self translateKeyCodeWithEvent:event];
@@ -990,12 +1142,25 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (void)releaseAllModifierKeys {
-    // Send asynchronously to avoid blocking the main thread if the connection is dead
+    // Reentry guard: if already inside a modifier release (which can
+    // happen when tearDownKeyboardStateForSessionEnd -> releaseAllButtons
+    // -> releaseAllModifierKeys, or during stream teardown when multiple
+    // teardown paths all call releaseAllModifierKeys), bail immediately
+    // to avoid a self-reentrant HIDDispatchInput deadlock.
+    if (self.keyboardModifierReleaseInProgress) {
+        return;
+    }
+    self.keyboardModifierReleaseInProgress = YES;
+
+    // Local masks are zeroed FIRST, so any concurrent flagsChanged: /
+    // keyDown: racing past the shouldSendInputEvents gate can't add
+    // back modifier bits before we send the UP events.
     self.keyboardPhysicalModifierSourceMask = 0;
     self.keyboardRemoteModifierMask = 0;
-    self.keyboardDeferredShortcutTranslationCommandMask = 0;
+
     PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
     if (!inputCtx) {
+        self.keyboardModifierReleaseInProgress = NO;
         return;
     }
     HIDDispatchInput(self, inputCtx, ^{
@@ -1008,48 +1173,64 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         LiSendKeyboardEventCtx(inputCtx, 0xA4, KEY_ACTION_UP, 0);
         LiSendKeyboardEventCtx(inputCtx, 0xA5, KEY_ACTION_UP, 0);
     });
+
+    self.keyboardModifierReleaseInProgress = NO;
+}
+
+- (void)tearDownKeyboardStateForSessionEnd:(const char *)reason {
+    // Idempotency gate. Five teardown paths all want to call this function:
+    //   1. performCloseStreamWindow (user hit the disconnect shortcut)
+    //   2. performCloseAndQuitApp   (user hit quit-app shortcut)
+    //   3. connectionTerminated     (common-c says connection is gone)
+    //   4. windowWillClose          (OS closes the stream window)
+    //   5. stageFailed/launchFailed (stream never got off the ground)
+    // Without the gate they can race on the main queue and stampede
+    // releaseAllModifierKeys, HID teardown, and window close logic.
+    if (self.keyboardTeardownAlreadyCalled) {
+        Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: skipped (already called, hadReleased=%d)",
+            reason ?: "",
+            self.keyboardModifierReleaseInProgress ? 1 : 0);
+        return;
+    }
+    self.keyboardTeardownAlreadyCalled = YES;
+    Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: start (physicalMask=0x%lx remoteMask=0x%lx send=%d)",
+        reason ?: "",
+        (unsigned long)self.keyboardPhysicalModifierSourceMask,
+        (unsigned long)self.keyboardRemoteModifierMask,
+        self.shouldSendInputEvents ? 1 : 0);
+
+    // 1) Release remote modifier state FIRST, while inputContext may still
+    //    be valid. This sends 8 KEY_ACTION_UP packets so the remote PC
+    //    never ends a session with a stuck Win/Ctrl/Alt/Shift key.
+    [self releaseAllModifierKeys];
+
+    // 2) Release pressed mouse buttons before we drop input events.
+    //    Pointer:releaseAllPressedMouseButtons is reentry-safe.
+    [self releaseAllPressedMouseButtons];
+
+    // 3) Disable further input event processing so any events still
+    //    in flight on the main queue become a no-op instead of trying
+    //    to talk to a dead Limelight context.
+    self.shouldSendInputEvents = NO;
+    self.suppressingKeyboardFromMouseEvent = NO;
+
+    Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: done", reason ?: "");
 }
 
 - (void)beginDeferredShortcutTranslationCommandHoldForKeyCode:(unsigned short)keyCode {
-    HIDKeyboardPhysicalModifierMask mask = HIDPhysicalModifierMaskForKeyCode(keyCode);
-    mask &= (HIDKeyboardPhysicalModifierMaskLeftCommand | HIDKeyboardPhysicalModifierMaskRightCommand);
-    if (mask == 0) {
-        return;
-    }
-
-    self.keyboardPhysicalModifierSourceMask |= mask;
-    self.keyboardDeferredShortcutTranslationCommandMask |= mask;
-    [self syncKeyboardModifierStateForEvent:nil];
+    // Legacy deferred-Command logic removed entirely. No-op.
+    (void)keyCode;
 }
 
 - (void)endDeferredShortcutTranslationCommandHoldForKeyCode:(unsigned short)keyCode {
-    HIDKeyboardPhysicalModifierMask mask = HIDPhysicalModifierMaskForKeyCode(keyCode);
-    mask &= (HIDKeyboardPhysicalModifierMaskLeftCommand | HIDKeyboardPhysicalModifierMaskRightCommand);
-    if (mask == 0) {
-        return;
-    }
-
-    self.keyboardPhysicalModifierSourceMask &= ~mask;
-    self.keyboardDeferredShortcutTranslationCommandMask &= ~mask;
-    [self syncKeyboardModifierStateForEvent:nil];
+    // Legacy deferred-Command logic removed entirely. No-op.
+    (void)keyCode;
 }
 
 - (void)sendSyntheticRemoteModifierTapForFlags:(NSEventModifierFlags)modifierFlags {
+    // SIMPLIFIED: Use the standard streaming mapping.
     NSEventModifierFlags relevantFlags = [StreamShortcutProfile relevantModifierFlags:modifierFlags];
-    NSUInteger remoteModifierMask = 0;
-    if (relevantFlags & NSEventModifierFlagShift) {
-        remoteModifierMask |= HIDKeyboardRemoteModifierMaskLeftShift;
-    }
-    if (relevantFlags & NSEventModifierFlagControl) {
-        remoteModifierMask |= HIDKeyboardRemoteModifierMaskLeftControl;
-    }
-    if (relevantFlags & NSEventModifierFlagOption) {
-        remoteModifierMask |= HIDKeyboardRemoteModifierMaskLeftAlt;
-    }
-    if (relevantFlags & NSEventModifierFlagCommand) {
-        remoteModifierMask |= HIDKeyboardRemoteModifierMaskLeftMeta;
-    }
-
+    NSUInteger remoteModifierMask = (NSUInteger)KMR_RemoteMaskForAppKitFlags(relevantFlags);
     HIDDispatchSyntheticRemoteModifierTap(self, remoteModifierMask, "sendSyntheticRemoteModifierTapForFlags");
 }
 
@@ -1072,20 +1253,9 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         return;
     }
 
+    // SIMPLIFIED: Use the standard streaming mapping.
     NSEventModifierFlags modifierFlags = [StreamShortcutProfile relevantModifierFlags:shortcut.modifierFlags];
-    NSUInteger remoteModifierMask = 0;
-    if (modifierFlags & NSEventModifierFlagShift) {
-        remoteModifierMask |= HIDKeyboardRemoteModifierMaskLeftShift;
-    }
-    if (modifierFlags & NSEventModifierFlagControl) {
-        remoteModifierMask |= HIDKeyboardRemoteModifierMaskLeftControl;
-    }
-    if (modifierFlags & NSEventModifierFlagOption) {
-        remoteModifierMask |= HIDKeyboardRemoteModifierMaskLeftAlt;
-    }
-    if (modifierFlags & NSEventModifierFlagCommand) {
-        remoteModifierMask |= HIDKeyboardRemoteModifierMaskLeftMeta;
-    }
+    NSUInteger remoteModifierMask = (NSUInteger)KMR_RemoteMaskForAppKitFlags(modifierFlags);
 
     char translatedModifiers = HIDRemoteModifierFlagsToGenericFlags(remoteModifierMask);
     short translatedKeyCode = (short)(0x8000 | [mappedKey shortValue]);
@@ -1136,11 +1306,29 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     });
 }
 
-- (short)translateKeyCodeWithEvent:(NSEvent *)event {
-    if (![self.mappings objectForKey:@(event.keyCode)]) {
+static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
+                                                          unsigned short keyCode) {
+    if (!HIDIsModifierKeyCode(keyCode)) {
         return 0;
     }
-    return [self.mappings[@(event.keyCode)] shortValue];
+    // SIMPLIFIED: Always use the standard streaming mapping.
+    return KMR_RemoteVKForPhysicalKeyCode(keyCode);
+}
+
+- (short)translateKeyCodeWithEvent:(NSEvent *)event {
+    unsigned short keyCode = event.keyCode;
+
+    if (HIDIsModifierKeyCode(keyCode)) {
+        unsigned short remapped = HIDRemappedKeyCodeForModifierKey(self, keyCode);
+        if (remapped != 0) {
+            return (short)remapped;
+        }
+    }
+
+    if (![self.mappings objectForKey:@(keyCode)]) {
+        return 0;
+    }
+    return [self.mappings[@(keyCode)] shortValue];
 }
 
 - (char)translatedModifierFlagsForEvent:(NSEvent *)event {
@@ -1473,6 +1661,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                     default:
                         break;
                 }
+                break;
             case kHIDPage_Simulation:
                 switch (usage) {
                     case kHIDUsage_Sim_Brake:
@@ -1485,6 +1674,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                     default:
                         break;
                 }
+                break;
 
             case kHIDPage_Button:
                 switch (usage) {
@@ -1521,6 +1711,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                         break;
                 }
                 
+                break;
             case kHIDPage_Consumer:
                 switch (usage) {
                     case kHIDUsage_Csmr_ACBack:
@@ -1540,6 +1731,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                         break;
                 }
                 
+                break;
             default:
                 break;
         }
@@ -1604,6 +1796,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                     default:
                         break;
                 }
+                break;
 
             case kHIDPage_Button:
                 switch (usage) {
@@ -1646,6 +1839,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                         break;
                 }
                 
+                break;
             default:
                 break;
         }

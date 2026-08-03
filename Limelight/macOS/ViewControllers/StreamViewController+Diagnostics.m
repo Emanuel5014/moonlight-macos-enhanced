@@ -2983,7 +2983,12 @@
         self.timeoutCopyLogsButton.frame = NSMakeRect(logsStartX + viewLogsWidth + logsGap, logsY, copyLogsWidth, logsBtnHeight);
     }
 
-    [self bringStreamControlsToFront];
+    @try {
+        [self bringStreamControlsToFront];
+    } @catch (NSException *exception) {
+        Log(LOG_W, @"[diag] bringStreamControlsToFront raised during viewDidLayout: %@ %@",
+            exception.name, exception.reason);
+    }
 }
 
 - (void)layoutConnectionWarning {
@@ -3206,7 +3211,7 @@
             case NSBezierPathElementLineTo:
                 CGPathAddLineToPoint(path, NULL, points[0].x, points[0].y);
                 break;
-            case NSBezierPathElementCurveTo:
+            case NSBezierPathElementCubicCurveTo:
                 CGPathAddCurveToPoint(path, NULL, points[0].x, points[0].y,
                                     points[1].x, points[1].y,
                                     points[2].x, points[2].y);

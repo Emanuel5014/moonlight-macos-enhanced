@@ -1,12 +1,93 @@
-**/xcuserdata/
-**/Moonlight.xcscmblueprint
-Build
-DerivedData
+# Build artifacts
 build/
-build-*/
-.spm-cache/
-tmp/
-Limelight/Version.xcconfig
-.reference/
-.plans/
+DerivedData/
+*.app
+*.dmg
+*.o
+*.a
+*.dylib
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Swift Package Manager cache
+Packages/checkouts/
+Packages/artifacts/
+Packages/repositories/
+.swiftpm/
+.build/
+
+# Large binary frameworks (managed via download script or Git LFS)
+xcframeworks/
+Packages/OpenSSL.xcframework/
+xcframeworks.zip
+
+# Local symlink to OpenSSL headers (build artifact, not source)
+libs/
+
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Logs
+*.log
+crash_log
+Logs/
+DerivedData/
+
+# Temporary
+*.tmp
+*.swp
+*~
+*.bak
+*.orig
+
+# Secrets / signing materials — never commit
+.env*
+*.p12
+*.cer
+*.crt
+*.pfx
+*.mobileprovision
+*.provisionprofile
+*.keystore
+*.jks
+certs/
+secrets/
+credentials/
+**/ApiKeys*.plist
+*.key
+*.pem
+id_rsa*
+id_dsa*
+*.pub
+
+# Xcode project noise
+*.xcscmblueprint
+xccheckout/
+
+# CI / local dev convenience files
+.vscode/
+.idea/
+*.iml
+
+
