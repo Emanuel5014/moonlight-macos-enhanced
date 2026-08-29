@@ -995,9 +995,9 @@ private struct DebugLogLiveView: View {
   private var currentModeDisplayName: String {
     switch currentMode {
     case .defaultLog:
-      return languageManager.localize("Default Log")
+      return languageManager.localize("Curated Log")
     case .raw:
-      return languageManager.localize("Raw")
+      return languageManager.localize("Raw Log")
     }
   }
 
@@ -1064,7 +1064,8 @@ private struct DebugLogLiveView: View {
     if selectedCategoryFilters.count == 1 {
       return selectedCategoryDescriptors.first?.displayName ?? languageManager.localize("1 Selected")
     }
-    return "\(languageManager.localize("Selected")) \(selectedCategoryFilters.count)"
+    return String(
+      format: languageManager.localize("%d Selected"), selectedCategoryFilters.count)
   }
 
   private var selectedCategorySummary: String? {
@@ -1149,7 +1150,7 @@ private struct DebugLogLiveView: View {
 
   private func categoryFilterExportSummary() -> String {
     let selected = selectedCategoryDescriptors.map(\.displayName)
-    return selected.isEmpty ? "未筛选（显示全部） / No Filter (Showing All)" : selected.joined(separator: " | ")
+    return selected.isEmpty ? languageManager.localize("No Filter (Showing All)") : selected.joined(separator: " | ")
   }
 
   private func scheduleSearchRefresh() {
@@ -1259,8 +1260,8 @@ private struct DebugLogLiveView: View {
           .font(.caption)
           .foregroundColor(.secondary)
         Picker("", selection: $settingsModel.debugLogMode) {
-          Text(languageManager.localize("Default")).tag("default")
-          Text(languageManager.localize("Raw")).tag("raw")
+          Text(languageManager.localize("Curated Log")).tag("default")
+          Text(languageManager.localize("Raw Log")).tag("raw")
         }
         .pickerStyle(.segmented)
         .frame(width: 260)
@@ -1316,7 +1317,7 @@ private struct DebugLogLiveView: View {
       }
 
       HStack(spacing: 8) {
-        TextField(languageManager.localize("Search keyword / host / error code / category"), text: $searchText)
+        TextField(languageManager.localize("Search terms / host / error code / category"), text: $searchText)
           .textFieldStyle(.roundedBorder)
 
         DebugLogCategoryFilterMenuButton(
@@ -1583,7 +1584,7 @@ private struct DebugLogEntryDetailView: View {
       }
 
       VStack(alignment: .leading, spacing: 6) {
-        Text(LanguageManager.shared.localize("Default View"))
+        Text(LanguageManager.shared.localize("Curated View"))
           .font(.caption)
           .foregroundColor(.secondary)
         Text(entry.defaultTitle)
