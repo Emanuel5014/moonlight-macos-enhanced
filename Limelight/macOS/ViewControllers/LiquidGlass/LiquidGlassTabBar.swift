@@ -173,32 +173,56 @@ public struct LiquidGlassTabBar: View {
     .opacity(TabBarConfig.containerBaseOpacity)
   }
 
-  // MARK: - 玻璃胶囊 (L1: 原生 macOS 26 .glassEffect)
+  // MARK: - 玻璃胶囊 (L1: 原生 macOS 26 .glassEffect, con fallback pre-26)
+  // Su macOS 26+ usa il vero materiale Liquid Glass.
+  // Su macOS <26 (deployment target 15.0) ripiega su un riempimento
+  // semitrasparente + bordo sottile: stesso layout, niente sampling del vetro.
   // 不使用任何手工渐变 / 模糊模拟，纯原生液态玻璃材质。
   // .glassEffect 采样下方的 trackContainer 基底，渲染冷调通透淡蓝玻璃。
   @ViewBuilder
   private func glassPill(width: CGFloat) -> some View {
-    RoundedRectangle(
-      cornerRadius: TabBarConfig.pillCornerRadius,
-      style: .continuous
-    )
-    .fill(Color.clear)
-    .frame(width: width, height: TabBarConfig.tabBarHeight)
-    .glassEffect(
-      .regular.tint(
-        TabBarConfig.accentCoolBlue.opacity(TabBarConfig.glassTintOpacity)
-      ),
-      in: RoundedRectangle(
+    if #available(macOS 26.0, *) {
+      RoundedRectangle(
         cornerRadius: TabBarConfig.pillCornerRadius,
         style: .continuous
       )
-    )
-    // 外部轻微柔和泛光 — 小 radius 确保不大面积扩散
-    .shadow(
-      color: TabBarConfig.accentCoolBlue.opacity(TabBarConfig.glowOpacity),
-      radius: TabBarConfig.glowRadius,
-      x: 0, y: 0
-    )
+      .fill(Color.clear)
+      .frame(width: width, height: TabBarConfig.tabBarHeight)
+      .glassEffect(
+        .regular.tint(
+          TabBarConfig.accentCoolBlue.opacity(TabBarConfig.glassTintOpacity)
+        ),
+        in: RoundedRectangle(
+          cornerRadius: TabBarConfig.pillCornerRadius,
+          style: .continuous
+        )
+      )
+      // 外部轻微柔和泛光 — 小 radius 确保不大面积扩散
+      .shadow(
+        color: TabBarConfig.accentCoolBlue.opacity(TabBarConfig.glowOpacity),
+        radius: TabBarConfig.glowRadius,
+        x: 0, y: 0
+      )
+    } else {
+      RoundedRectangle(
+        cornerRadius: TabBarConfig.pillCornerRadius,
+        style: .continuous
+      )
+      .fill(TabBarConfig.accentCoolBlue.opacity(0.30))
+      .overlay(
+        RoundedRectangle(
+          cornerRadius: TabBarConfig.pillCornerRadius,
+          style: .continuous
+        )
+        .strokeBorder(Color.white.opacity(0.30), lineWidth: 0.5)
+      )
+      .frame(width: width, height: TabBarConfig.tabBarHeight)
+      .shadow(
+        color: TabBarConfig.accentCoolBlue.opacity(TabBarConfig.glowOpacity),
+        radius: TabBarConfig.glowRadius,
+        x: 0, y: 0
+      )
+    }
   }
 
   // MARK: - Geometry
