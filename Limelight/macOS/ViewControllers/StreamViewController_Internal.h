@@ -219,15 +219,20 @@ static inline BOOL MLIsPrintableANSIKeyCode(unsigned short keyCode) {
 ///   - repeated clicks reset the token and cause infinite suppression,
 ///   - the flag is written from 3+ locations leading to contradictory state.
 ///
-/// The solution uses THREE independent, evidence-based checks. Any one of
-/// them being "this is NOT a real keyboard event" causes the keyDown to be
-/// rejected.  The three checks are:
+/// The solution uses a PROXIMITY GATE plus three independent,
+/// evidence-based corroborating checks. The gate (±50 ms around any mouse
+/// button event) must pass first: synthetic events are always dispatched
+/// inside that window, while ordinary typing never is. Inside the window,
+/// at least ONE corroborating check must fire, otherwise the event is
+/// treated as genuine fast input (click+key in games, key repeat held
+/// across clicks) and let through. The checks are:
 ///
-/// 1. PROXIMITY CHECK  — Was this keyDown generated within a very small
-///    temporal window (±50 ms) of ANY mouse button event (left/right/other
-///    down/up)?  Genuine physical-keyboard keyDowns NEVER arrive within
-///    50 ms of a mouse button press in the HID queue.  Double-click synthetic
-///    events ALWAYS do.
+/// 0. CGEVENT CHECK — real hardware keyDowns always wrap a CGEvent;
+///    AppKit-forged double-click keyDowns don't. Strongest single tell.
+///
+/// 1. PROXIMITY GATE — was this keyDown generated within ±50 ms of ANY
+///    mouse button event (left/right/other down/up)? Required but never
+///    sufficient on its own.
 ///
 /// 2. KEY-STATE CONSISTENCY CHECK — For printable ANSI keys (the only class
 ///    AppKit ever synthesizes), verify:
@@ -322,6 +327,14 @@ static inline BOOL MLPrintableANSIKeyCodeMatchesCharacter(unsigned short keyCode
 /// Main entry-point: is this NSEventTypeKeyDown almost certainly a
 /// mouse-synthesized event rather than a real keyboard event?
 ///
+/// Structure: the PROXIMITY gate comes first (±50 ms around any mouse
+/// button event). Double-click synthetic keyDowns are ALWAYS dispatched
+/// inside that window, so anything outside it is genuine by definition.
+/// Inside the window we still require CORROBORATION from at least one of
+/// the evidence checks below: proximity alone must never convict, because
+/// real gameplay input (mouse click + key within milliseconds, key repeat
+/// held across clicks) routinely lands inside the window.
+///
 /// @param event              the keyDown in question
 /// @param lastMouseButtonAtMs monotonic-millis timestamp of the most recent
 ///                           mouse button event (down or up, any button).
@@ -336,19 +349,31 @@ static inline BOOL MLKeyDownIsSyntheticDoubleClick(NSEvent *event,
         return NO;
     }
 
-    // ---------- 1. PROXIMITY CHECK ----------
+    // ---------- 1. PROXIMITY GATE (±50 ms, corroborating only) ----------
+    // Genuine physical-keyboard keyDowns essentially never arrive within
+    // 50 ms of a mouse button press in the HID queue. Double-click
+    // synthetic events ALWAYS do (same dispatch). Outside the window the
+    // event is genuine — return early so normal typing is never affected.
     if (lastMouseButtonAtMs != 0) {
         uint64_t now = MLMonotonicMillis();
         uint64_t delta = (now >= lastMouseButtonAtMs)
             ? (now - lastMouseButtonAtMs)
             : (lastMouseButtonAtMs - now);  // shouldn't happen with monotonic
-        if (delta <= 120) {
-            // Genuine keyboard keyDown is almost never within 120ms of a
-            // mouse button event.  Double-click synthetic keyDown is ALWAYS
-            // in this window (it's literally part of the same dispatch).
-            if (outReason != NULL) *outReason = "proximity";
-            return YES;
+        if (delta > 50) {
+            if (outReason != NULL) *outReason = "genuine";
+            return NO;
         }
+    } else {
+        if (outReason != NULL) *outReason = "genuine";
+        return NO;
+    }
+
+    // ---------- 2. CGEvent check ----------
+    // Real hardware keyDowns always wrap a CGEvent. AppKit-forged
+    // double-click keyDowns don't. This is the strongest single tell.
+    if (event.CGEvent == NULL) {
+        if (outReason != NULL) *outReason = "no-cgevent";
+        return YES;
     }
 
     // ---------- 2. CHARACTER CONSISTENCY ----------
