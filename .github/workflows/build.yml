@@ -55,6 +55,13 @@ jobs:
         unzip -o xcframeworks.zip -d xcframeworks/
         ls -la xcframeworks/
 
+    - name: Download OpenSSL.xcframework
+      run: |
+        curl -L --fail -o openssl.zip "https://github.com/krzyzanowskim/OpenSSL/releases/download/3.6.0001/OpenSSL.xcframework.zip"
+        mkdir -p Packages
+        unzip -o openssl.zip -d Packages/
+        ls -la Packages/OpenSSL.xcframework
+
     - name: Build ${{ matrix.display_name }} package
       run: |
         xcodebuild -project Moonlight.xcodeproj \
