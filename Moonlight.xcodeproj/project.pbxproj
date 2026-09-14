@@ -474,6 +474,7 @@
 				PRODUCT_NAME = "Moonlight Enhanced";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
+				SWIFT_OBJC_INTERFACE_HEADER_NAME = Moonlight-Swift.h;
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -534,6 +535,7 @@
 				PRODUCT_NAME = "Moonlight Enhanced";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
+				SWIFT_OBJC_INTERFACE_HEADER_NAME = Moonlight-Swift.h;
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
