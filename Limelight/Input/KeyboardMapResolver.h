@@ -89,6 +89,23 @@ typedef NS_ENUM(uint8_t, KMR_PhysicalModifier) {
     KMR_Phys_Count,
 };
 
+// ---------------------------------------------------------------------------
+// Mapping modes.
+// ---------------------------------------------------------------------------
+typedef NS_ENUM(uint8_t, KMR_MappingMode) {
+    // Direct mapping (default): Cmd->Win, Ctrl->Ctrl, Option->Alt, Shift->Shift.
+    KMR_MappingStandard = 0,
+    // Parsec-style mapping: Cmd->Ctrl, Ctrl->Win, Option->Alt, Shift->Shift.
+    // Matches Parsec's macOS client so muscle memory transfers 1:1.
+    KMR_MappingParsecStyle = 1,
+};
+
+// Selects which lookup table the mapping functions below consult.
+// HIDSupport sets this per host at stream start from the
+// "Keyboard Compatibility" setting. Defaults to KMR_MappingStandard.
+void KMR_SetActiveMappingMode(KMR_MappingMode mode);
+KMR_MappingMode KMR_ActiveMappingMode(void);
+
 // Convert a macOS kVK_* keycode to KMR_PhysicalModifier.
 KMR_PhysicalModifier KMR_PhysicalFromKeyCode(unsigned short keyCode);
 

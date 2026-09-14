@@ -177,24 +177,34 @@ import VideoToolbox
 
 @objc enum KeyboardCompatibilityMode: Int, CaseIterable {
   case streamingStandard = 0
+  case parsecStyle = 1
 
   static let defaultMode: Self = .streamingStandard
 
   init(persistedRawValue: Int?) {
-    // Always use streaming standard regardless of persisted value.
     // Legacy modes (commandToControl, swapLeftControlAndWin, shortcutTranslation,
-    // hybrid, moonlightClassic) have been removed completely per CI/CD refactor.
-    self = .streamingStandard
+    // hybrid, moonlightClassic) were removed completely per CI/CD refactor and
+    // fall back to streaming standard.
+    switch persistedRawValue {
+    case Self.parsecStyle.rawValue:
+      self = .parsecStyle
+    default:
+      self = .streamingStandard
+    }
   }
 
   init(selection: String) {
-    self = .streamingStandard
+    self =
+      Self.allCases.first(where: { $0.displayKey == selection })
+      ?? Self.defaultMode
   }
 
   var displayKey: String {
     switch self {
     case .streamingStandard:
       return "Streaming Standard (Recommended)"
+    case .parsecStyle:
+      return "Parsec Style (Cmd→Ctrl)"
     }
   }
 

@@ -288,10 +288,9 @@ final class StreamShortcutProfile: NSObject {
       if candidate.modifierOnly || !candidate.hasKeyCode {
         return "Shortcut must include regular key"
       }
-      let minimumModifierCount = allowsSingleModifierShortcut(for: action) ? 1 : 2
-      if modifierCount(modifiers) < minimumModifierCount {
-        return minimumModifierCount == 1 ? "Shortcut requires modifier" : "Shortcut requires two modifiers"
-      }
+      // Free combinations are allowed: a bare key or any modifier count.
+      // (The modifier-only release-mouse action keeps its own two-modifier
+      // rule above so a lone Ctrl press can never release the mouse.)
       if keySymbol(for: candidate.keyCode) == nil {
         return "Shortcut key unsupported"
       }
@@ -323,10 +322,6 @@ final class StreamShortcutProfile: NSObject {
         count += 1
       }
     }
-  }
-
-  private static func allowsSingleModifierShortcut(for action: String) -> Bool {
-    action == showDisconnectOptionsAction || action == closeAndQuitAppAction
   }
 
   private static func isReserved(_ shortcut: StreamShortcut, action: String) -> Bool {
@@ -581,14 +576,10 @@ final class KeyboardTranslationProfile: NSObject {
     rules: [KeyboardTranslationRule],
     streamShortcuts: [String: StreamShortcut]
   ) -> String? {
-    let modifiers = StreamShortcutProfile.relevantModifierFlags(shortcut.modifierFlags)
-
     if shortcut.modifierOnly || !shortcut.hasKeyCode {
       return "Shortcut must include regular key"
     }
-    if StreamShortcutProfile.modifierCount(modifiers) < 1 {
-      return "Shortcut requires modifier"
-    }
+    // Free combinations are allowed: a bare key or any modifier count.
     if StreamShortcutProfile.keySymbol(for: shortcut.keyCode) == nil {
       return "Shortcut key unsupported"
     }

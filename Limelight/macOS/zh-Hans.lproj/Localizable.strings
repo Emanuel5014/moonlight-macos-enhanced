@@ -728,6 +728,9 @@
 "Welcome AWDL detail" = "可选。它会在串流期间管理 AWDL 接口，帮助 Wi‑Fi 串流更稳定。";
 "Keyboard Compatibility" = "快捷键翻译";
 "Keyboard Compatibility detail" = "上面控制全局翻译方式；下面的自定义规则始终生效。";
+"Parsec Style (Cmd→Ctrl)" = "Parsec 风格 (Cmd→Ctrl)";
+"Keyboard Compatibility Standard detail" = "macOS 到 Windows 直接映射。Cmd→Win，Ctrl→Ctrl，Option→Alt，Shift→Shift。";
+"Keyboard Compatibility Parsec detail" = "Parsec 风格映射，与 Parsec macOS 客户端一致。Cmd→Ctrl，Ctrl→Win，Option→Alt，Shift→Shift。";
 "Shortcut Translation Rules" = "快捷键翻译规则";
 "Shortcut Translation Rules note" = "这里的规则始终生效。只有当你想把某个 Mac 快捷键改成主机快捷键，或直接改成 Moonlight 动作时，才需要添加。";
 "No Shortcut Translation Rules" = "还没有翻译规则";

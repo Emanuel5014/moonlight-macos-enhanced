@@ -747,11 +747,16 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         self.pressedMouseButtonsMask = 0;
         [self resetInputDiagnostics];
 
+        // Select the modifier mapping table per host BEFORE any input flows:
+        // Streaming Standard maps Cmd->Win directly, Parsec Style maps
+        // Cmd->Ctrl and Ctrl->Win like Parsec's macOS client.
+        KMR_MappingMode kbMode =
+            [SettingsClass keyboardCompatibilityModeFor:self.host.uuid] == KeyboardCompatibilityModeParsecStyle
+            ? KMR_MappingParsecStyle
+            : KMR_MappingStandard;
+        KMR_SetActiveMappingMode(kbMode);
         // SIMPLIFIED: Print the active keyboard mapping matrix once at init.
-        // In the new "Streaming Standard" mode, the mapping is fixed (Cmd->Win, etc.)
-        // and does not depend on any compatibility flags.
         KMR_LogActiveMapping();
-        Log(LOG_I, @"[kbmap] HIDSupport init: Mode = Streaming Standard (Cmd->Win, Ctrl->Ctrl, Option->Alt)");
 
         [self setupHidManager];
         

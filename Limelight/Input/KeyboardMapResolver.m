@@ -27,7 +27,9 @@
 
 // This is the ONLY place that defines modifier mapping.
 // It maps macOS physical modifier -> Windows HID modifier mask.
-static const uint8_t s_mapTable[KMR_Phys_Count] = {
+// Two tables: direct (standard) and Parsec-style. The active table is
+// selected per host via KMR_SetActiveMappingMode.
+static const uint8_t s_mapTableStandard[KMR_Phys_Count] = {
     KMR_Remote_LeftShift,   // KMR_Phys_LeftShift
     KMR_Remote_RightShift,  // KMR_Phys_RightShift
     KMR_Remote_LeftControl, // KMR_Phys_LeftControl
@@ -37,6 +39,41 @@ static const uint8_t s_mapTable[KMR_Phys_Count] = {
     KMR_Remote_LeftMeta,    // KMR_Phys_LeftCommand  -> Win
     KMR_Remote_RightMeta,   // KMR_Phys_RightCommand -> Win
 };
+
+// Parsec-style mapping (matches Parsec's macOS client):
+//   macOS Command (⌘)  -> Windows Ctrl
+//   macOS Control (⌃)  -> Windows Win
+//   macOS Option  (⌥)  -> Windows Alt (unchanged)
+//   macOS Shift   (⇧)  -> Windows Shift (unchanged)
+static const uint8_t s_mapTableParsecStyle[KMR_Phys_Count] = {
+    KMR_Remote_LeftShift,   // KMR_Phys_LeftShift
+    KMR_Remote_RightShift,  // KMR_Phys_RightShift
+    KMR_Remote_LeftMeta,    // KMR_Phys_LeftControl  -> Win
+    KMR_Remote_RightMeta,   // KMR_Phys_RightControl -> Win
+    KMR_Remote_LeftAlt,     // KMR_Phys_LeftOption
+    KMR_Remote_RightAlt,    // KMR_Phys_RightOption
+    KMR_Remote_LeftControl, // KMR_Phys_LeftCommand  -> Ctrl
+    KMR_Remote_RightControl,// KMR_Phys_RightCommand -> Ctrl
+};
+
+static KMR_MappingMode s_activeMappingMode = KMR_MappingStandard;
+
+void KMR_SetActiveMappingMode(KMR_MappingMode mode) {
+    if (mode != KMR_MappingStandard && mode != KMR_MappingParsecStyle) {
+        mode = KMR_MappingStandard;
+    }
+    s_activeMappingMode = mode;
+}
+
+KMR_MappingMode KMR_ActiveMappingMode(void) {
+    return s_activeMappingMode;
+}
+
+static const uint8_t *KMR_ActiveTable(void) {
+    return s_activeMappingMode == KMR_MappingParsecStyle
+        ? s_mapTableParsecStyle
+        : s_mapTableStandard;
+}
 
 // ---------------------------------------------------------------------------
 // 2. Public entry points.
@@ -60,7 +97,7 @@ KMR_RemoteModifierMask KMR_RemoteMaskForPhysical(KMR_PhysicalModifier phys) {
     if ((unsigned)phys >= KMR_Phys_Count) {
         return 0;
     }
-    return s_mapTable[phys];
+    return KMR_ActiveTable()[phys];
 }
 
 unsigned short KMR_RemoteVKForPhysicalKeyCode(unsigned short keyCode) {
@@ -68,7 +105,7 @@ unsigned short KMR_RemoteVKForPhysicalKeyCode(unsigned short keyCode) {
     if (phys == KMR_Phys_Count) {
         return 0;
     }
-    KMR_RemoteModifierMask mask = s_mapTable[phys];
+    KMR_RemoteModifierMask mask = KMR_ActiveTable()[phys];
     // Invert mask to VK code.
     switch (mask) {
         case KMR_Remote_LeftShift:   return KMR_VK_LSHIFT;
@@ -158,12 +195,14 @@ void KMR_FormatRemoteMask(KMR_RemoteModifierMask mask, char *buf, size_t bufLen)
 
 void KMR_LogActiveMapping(void) {
     char maskBuf[32];
-    Log(LOG_I, @"[kbmap] ===== KeyboardMapResolver active mapping (Streaming Mode) =====");
+    const uint8_t *table = KMR_ActiveTable();
+    Log(LOG_I, @"[kbmap] ===== KeyboardMapResolver active mapping (%s) =====",
+        s_activeMappingMode == KMR_MappingParsecStyle ? "Parsec Style" : "Streaming Standard");
     Log(LOG_I, @"[kbmap] %-8s  %-10s  %s", "Phys", "Keycode", "→ Remote Mask");
     Log(LOG_I, @"[kbmap] --------  ----------  ----------------------------");
     for (uint8_t p = 0; p < KMR_Phys_Count; p++) {
         KMR_PhysicalModifier phys = (KMR_PhysicalModifier)p;
-        KMR_RemoteModifierMask mask = s_mapTable[phys];
+        KMR_RemoteModifierMask mask = table[phys];
         KMR_FormatRemoteMask(mask, maskBuf, sizeof(maskBuf));
 
         unsigned short kvk = 0;

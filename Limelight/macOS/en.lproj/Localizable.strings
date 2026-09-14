@@ -729,6 +729,9 @@
 "Welcome AWDL detail" = "Optional. Helps stabilize Wi-Fi streaming by managing the AWDL interface during a session.";
 "Keyboard Compatibility" = "Shortcut Translation";
 "Keyboard Compatibility detail" = "The option above controls global translation. The custom rules below always stay active.";
+"Parsec Style (Cmd→Ctrl)" = "Parsec Style (Cmd→Ctrl)";
+"Keyboard Compatibility Standard detail" = "Direct macOS to Windows mapping. Cmd→Win, Ctrl→Ctrl, Option→Alt, Shift→Shift.";
+"Keyboard Compatibility Parsec detail" = "Parsec-style mapping, like Parsec's macOS client. Cmd→Ctrl, Ctrl→Win, Option→Alt, Shift→Shift.";
 "Shortcut Translation Rules" = "Shortcut Translation Rules";
 "Shortcut Translation Rules note" = "These rules always stay active. Add one only if you want a specific Mac shortcut to trigger a host shortcut or a Moonlight action.";
 "No Shortcut Translation Rules" = "No translation rules yet";

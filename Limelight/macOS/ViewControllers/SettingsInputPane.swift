@@ -61,9 +61,12 @@ struct InputView: View {
   }
 
   private var selectedKeyboardTranslationDetailKey: String {
-    // Simplified: Only one mode exists now - Streaming Standard (Parsec-like).
-    // No more legacy modes to choose from.
-    return "Direct macOS to Windows mapping. Cmd→Win, Ctrl→Ctrl, Option→Alt, Shift→Shift."
+    switch settingsModel.selectedKeyboardCompatibilityMode {
+    case KeyboardCompatibilityMode.parsecStyle.displayKey:
+      return "Keyboard Compatibility Parsec detail"
+    default:
+      return "Keyboard Compatibility Standard detail"
+    }
   }
 
   var body: some View {
