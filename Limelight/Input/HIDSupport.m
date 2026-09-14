@@ -9,6 +9,8 @@
 #import "KeyboardMapResolver.h"
 
 #import <IOKit/hid/IOHIDElement.h>
+#import <IOKit/hidsystem/IOLLEvent.h>
+#import <CoreGraphics/CGEventSource.h>
 
 // ---------------------------------------------------------------------------
 // CI/CD Pipeline Refactor (2026-08-02): KeyboardMapResolver bridge
@@ -251,6 +253,37 @@ static HIDKeyboardPhysicalModifierMask HIDEffectivePhysicalModifierMaskForEvent(
     // -----------------------------------------------------------------------
     (void)event;
     return physicalMask;
+}
+
+// ---------------------------------------------------------------------------
+// Live modifier reconciliation (stuck-modifier fix).
+//
+// keyboardPhysicalModifierSourceMask is event-driven: it only changes when a
+// flagsChanged: event reaches us. If a release is missed (app was inactive
+// for Cmd+Tab/Spotlight, event arrived while input was disabled, system
+// gesture consumed it, ...), the tracked bit stays set and the remote key
+// stays DOWN until the user re-presses the modifier — the classic "Cmd
+// stuck for seconds" bug.
+//
+// CGEventSourceFlagsState() reports the AUTHORITATIVE live hardware state,
+// so we cross-check the tracked mask against it on every sync and when the
+// app becomes active again. Bits tracked-but-not-live are cleared (the sync
+// below then emits the missing KEY_ACTION_UP); bits live-but-not-tracked
+// (pressed while we were away) are adopted (sync emits DOWN). Either way
+// the remote state converges instead of sticking.
+// ---------------------------------------------------------------------------
+static HIDKeyboardPhysicalModifierMask HIDLivePhysicalModifierMask(void) {
+    CGEventFlags flags = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState);
+    HIDKeyboardPhysicalModifierMask mask = 0;
+    if (flags & NX_DEVICELSHIFTKEYMASK) { mask |= HIDKeyboardPhysicalModifierMaskLeftShift; }
+    if (flags & NX_DEVICERSHIFTKEYMASK) { mask |= HIDKeyboardPhysicalModifierMaskRightShift; }
+    if (flags & NX_DEVICELCTLKEYMASK) { mask |= HIDKeyboardPhysicalModifierMaskLeftControl; }
+    if (flags & NX_DEVICERCTLKEYMASK) { mask |= HIDKeyboardPhysicalModifierMaskRightControl; }
+    if (flags & NX_DEVICELALTKEYMASK) { mask |= HIDKeyboardPhysicalModifierMaskLeftOption; }
+    if (flags & NX_DEVICERALTKEYMASK) { mask |= HIDKeyboardPhysicalModifierMaskRightOption; }
+    if (flags & NX_DEVICELCMDKEYMASK) { mask |= HIDKeyboardPhysicalModifierMaskLeftCommand; }
+    if (flags & NX_DEVICERCMDKEYMASK) { mask |= HIDKeyboardPhysicalModifierMaskRightCommand; }
+    return mask;
 }
 
 static unsigned short HIDRemoteModifierKeyCode(HIDKeyboardRemoteModifierMask mask) {
@@ -790,11 +823,22 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         
         [self initializeDisplayLink];
         [self setupCoreHIDMouseDriverIfNeeded];
+
+        // Stuck-modifier safety net: presses/releases that happen while
+        // another app is frontmost (Cmd+Tab, Spotlight, ...) never reach us.
+        // Re-sync with live hardware state on re-activation.
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(handleApplicationDidBecomeActive:)
+                                                     name:NSApplicationDidBecomeActiveNotification
+                                                   object:nil];
     }
     return self;
 }
 
 - (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:NSApplicationDidBecomeActiveNotification
+                                                  object:nil];
     [self tearDownCoreHIDMouseDriver];
     NSLog(@"HIDSupport dealloc");
 }
@@ -924,7 +968,54 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     return desired;
 }
 
+- (void)reconcilePhysicalModifierMaskWithLiveState {
+    HIDKeyboardPhysicalModifierMask tracked = self.keyboardPhysicalModifierSourceMask;
+    HIDKeyboardPhysicalModifierMask live = HIDLivePhysicalModifierMask();
+    if (tracked == live) {
+        return;
+    }
+    HIDKeyboardPhysicalModifierMask stale = tracked & ~live;
+    HIDKeyboardPhysicalModifierMask missed = live & ~tracked;
+    if (stale != 0) {
+        Log(LOG_W, @"[keyboard] modifier resync: releasing stale tracked bits 0x%lx (live=0x%lx)",
+            (unsigned long)stale, (unsigned long)live);
+    }
+    if (missed != 0) {
+        Log(LOG_I, @"[keyboard] modifier resync: adopting live-pressed bits 0x%lx",
+            (unsigned long)missed);
+    }
+    self.keyboardPhysicalModifierSourceMask = live;
+}
+
+// Public re-sync entry point: converge tracked + remote modifier state with
+// physical reality (used on app activation; per-event reconcile happens in
+// -syncKeyboardModifierStateForEvent: below).
+- (void)resyncKeyboardModifiersWithLiveState {
+    [self reconcilePhysicalModifierMaskWithLiveState];
+    // NOTE: sync takes an event but only uses it via
+    // HIDEffectivePhysicalModifierMaskForEvent(), which ignores it, so nil
+    // is safe here.
+    [self syncKeyboardModifierStateForEvent:nil];
+}
+
+- (void)handleApplicationDidBecomeActive:(NSNotification *)note {
+    (void)note;
+    // Releases pressed while another app was frontmost never reach us, so
+    // any tracked-down modifier is stale by definition. Heal it now instead
+    // of leaving the remote key stuck until the user re-presses it.
+    if (!self.shouldSendInputEvents) {
+        self.keyboardPhysicalModifierSourceMask = 0;
+        self.keyboardRemoteModifierMask = 0;
+        return;
+    }
+    [self resyncKeyboardModifiersWithLiveState];
+}
+
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event {
+    // Self-healing: converge with live hardware state first so a previously
+    // missed release is emitted as KEY_ACTION_UP on the next event instead
+    // of sticking until manual re-press.
+    [self reconcilePhysicalModifierMaskWithLiveState];
     NSUInteger previous = self.keyboardRemoteModifierMask;
     NSUInteger desired = [self desiredRemoteKeyboardModifierMaskForEvent:event];
     NSUInteger changed = previous ^ desired;
@@ -975,11 +1066,16 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     if (event == nil || event.type != NSEventTypeFlagsChanged) {
         return;
     }
+
+    // Always track physical reality, even while input is disabled (menu open,
+    // mouse uncaptured, ...): otherwise a release that arrives in that window
+    // is lost and the tracked bit sticks until manual re-press. Only the
+    // remote SEND below is gated.
+    [self updateKeyboardPhysicalModifierStateFromEvent:event];
     if (!self.shouldSendInputEvents) {
         return;
     }
 
-    [self updateKeyboardPhysicalModifierStateFromEvent:event];
     [self syncKeyboardModifierStateForEvent:event];
 }
 

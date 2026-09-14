@@ -278,11 +278,24 @@ final class StreamShortcutProfile: NSObject {
     let modifiers = relevantModifierFlags(candidate.modifierFlags)
 
     if isModifierOnlyAction(action) {
-      if !candidate.modifierOnly || candidate.hasKeyCode {
-        return "Shortcut modifiers only required"
-      }
-      if modifierCount(modifiers) < 2 {
-        return "Shortcut requires two modifiers"
+      if candidate.modifierOnly {
+        // Classic modifier chord (e.g. Ctrl+Opt): needs two modifiers so a
+        // lone Ctrl press can never release the mouse by accident.
+        if candidate.hasKeyCode {
+          return "Shortcut modifiers only required"
+        }
+        if modifierCount(modifiers) < 2 {
+          return "Shortcut requires two modifiers"
+        }
+      } else {
+        // Key-based release (e.g. a bare F12): free combos, same rules as
+        // every other action.
+        if !candidate.hasKeyCode {
+          return "Shortcut must include regular key"
+        }
+        if keySymbol(for: candidate.keyCode) == nil {
+          return "Shortcut key unsupported"
+        }
       }
     } else {
       if candidate.modifierOnly || !candidate.hasKeyCode {

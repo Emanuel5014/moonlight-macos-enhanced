@@ -2940,6 +2940,21 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         return YES;
     }
 
+    // Key-based mouse-release shortcut (e.g. a bare F12). The classic
+    // modifier-chord release is handled separately in -flagsChanged:.
+    // matchesShortcut: already rejects modifierOnly shortcuts, but guard
+    // explicitly so the two paths can never overlap.
+    StreamShortcut *releaseShortcut = [self streamShortcutForAction:MLShortcutActionReleaseMouseCapture];
+    if (!releaseShortcut.modifierOnly
+        && [self event:event matchesShortcut:releaseShortcut]) {
+        [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"release-shortcut" event:event];
+        self.pendingOptionUncaptureToken += 1;
+        [self.hidSupport releaseAllModifierKeys];
+        [self suppressConnectionWarningsForSeconds:2.0 reason:@"shortcut-uncapture"];
+        [self uncaptureMouseWithCode:@"MUC104" reason:@"key-release-shortcut"];
+        return YES;
+    }
+
     if (event.keyCode == kVK_ANSI_W && eventModifierFlags == NSEventModifierFlagCommand) {
         [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"cmd-w-swallow" event:event];
         Log(LOG_D, @"[diag] cmd+w swallowed after custom handlers: %@", MLDisconnectEventSummary(event));
