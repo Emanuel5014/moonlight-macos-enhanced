@@ -1242,7 +1242,7 @@ class SettingsModel: ObservableObject {
     selectedVideoRendererMode = Self.defaultVideoRendererMode
     selectedVideoCodec = Self.defaultVideoCodec
     hdr = Self.defaultHdr
-    selectedPacingOptions = Self.defaultPacingOptions
+    selectedPacingOptions = Self.pacingOptions.first ?? Self.defaultPacingOptions
     selectedSmoothnessLatencyMode = Self.defaultSmoothnessLatencyMode
     selectedDisplaySyncMode = Self.defaultDisplaySyncMode
     selectedFrameQueueTarget = Self.defaultFrameQueueTarget

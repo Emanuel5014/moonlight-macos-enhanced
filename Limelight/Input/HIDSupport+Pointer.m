@@ -429,8 +429,12 @@ static inline double HIDBlendFreeMouseGain(double currentGain, double rawDelta, 
 -(void)registerMouseCallbacks:(GCMouse *)mouse API_AVAILABLE(macos(11.0)) {
     if (self.useGCMouse) {
         mouse.mouseInput.mouseMovedHandler = ^(GCMouseInput * _Nonnull mouse, float deltaX, float deltaY) {
-            self.mouseDeltaX += deltaX;
-            self.mouseDeltaY -= deltaY;
+            @synchronized (self) {
+                self.mouseDeltaX += deltaX;
+                self.mouseDeltaY -= deltaY;
+            }
+            // Flush immediately instead of waiting for the display-link tick.
+            HIDFlushAccumulatedGCMouseDeltas(self);
         };
         
         mouse.mouseInput.leftButton.pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
@@ -520,6 +524,67 @@ static inline double HIDBlendFreeMouseGain(double currentGain, double rawDelta, 
     }
 }
 
+// Flushes GameController-framework mouse deltas accumulated in mouseDeltaX/Y.
+// Called immediately on every mouseMoved event for lowest latency; the
+// display-link callback below is only a safety-net flush. This matches
+// moonlight-qt (and our CoreHID path), which send LiSendMouseMoveEvent
+// directly from the input event handler instead of batching deltas to the
+// display refresh rate (batching adds up to a full frame of input lag).
+static void HIDFlushAccumulatedGCMouseDeltas(HIDSupport *me)
+{
+    if (me == nil) {
+        return;
+    }
+
+    CGFloat deltaX, deltaY;
+    @synchronized (me) {
+        deltaX = me.mouseDeltaX;
+        deltaY = me.mouseDeltaY;
+        me.mouseDeltaX = 0;
+        me.mouseDeltaY = 0;
+    }
+    if (deltaX == 0 && deltaY == 0) {
+        return;
+    }
+    if (me.shouldSendInputEvents) {
+        PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(me);
+        if (!inputCtx) {
+            return;
+        }
+        NSInteger touchscreenMode = [SettingsClass touchscreenModeFor:me.host.uuid];
+        BOOL useAbsolutePointerPath = HIDShouldUseAbsolutePointerPath(me, touchscreenMode);
+        if (!useAbsolutePointerPath) {
+            BOOL suppressed = HIDShouldSuppressRelativeMouse(me);
+            if (suppressed) {
+                [me recordRelativeInputDiagnosticsFrom:@"gcMouse"
+                                             rawDeltaX:deltaX
+                                             rawDeltaY:deltaY
+                                            sentDeltaX:0
+                                            sentDeltaY:0
+                                            suppressed:YES];
+                return;
+            }
+            CGFloat normalizedDeltaX = deltaX / HIDGCMouseRelativeSpeedDivisor;
+            CGFloat normalizedDeltaY = deltaY / HIDGCMouseRelativeSpeedDivisor;
+            CGFloat sensitivity = HIDPointerSensitivityForHost(me.host);
+            short moveX = HIDScaledRelativeDelta(normalizedDeltaX, sensitivity);
+            short moveY = HIDScaledRelativeDelta(normalizedDeltaY, sensitivity);
+            [me recordRelativeInputDiagnosticsFrom:@"gcMouse"
+                                         rawDeltaX:deltaX
+                                         rawDeltaY:deltaY
+                                        sentDeltaX:moveX
+                                        sentDeltaY:moveY
+                                        suppressed:NO];
+            HIDDispatchInput(me, inputCtx, ^{
+                LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
+            });
+            [SettingsClass updateMouseInputRuntimeStatusFor:me.host.uuid
+                                                summaryKey:@"Mouse Runtime Path GameController Active"
+                                                 detailKey:@"Mouse Runtime Detail GameController Active"];
+        }
+    }
+}
+
 static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
                                           const CVTimeStamp *now,
                                           const CVTimeStamp *vsyncTime,
@@ -532,50 +597,7 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
         return kCVReturnError;
     }
 
-    CGFloat deltaX, deltaY;
-    deltaX = me.mouseDeltaX;
-    deltaY = me.mouseDeltaY;
-    if (deltaX != 0 || deltaY != 0) {
-        me.mouseDeltaX = 0;
-        me.mouseDeltaY = 0;
-        if (me.shouldSendInputEvents) {
-            PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(me);
-            if (!inputCtx) {
-                return kCVReturnSuccess;
-            }
-            NSInteger touchscreenMode = [SettingsClass touchscreenModeFor:me.host.uuid];
-            BOOL useAbsolutePointerPath = HIDShouldUseAbsolutePointerPath(me, touchscreenMode);
-            if (!useAbsolutePointerPath) {
-                BOOL suppressed = HIDShouldSuppressRelativeMouse(me);
-                if (suppressed) {
-                    [me recordRelativeInputDiagnosticsFrom:@"gcMouse"
-                                                 rawDeltaX:deltaX
-                                                 rawDeltaY:deltaY
-                                                sentDeltaX:0
-                                                sentDeltaY:0
-                                                suppressed:YES];
-                    return kCVReturnSuccess;
-                }
-                CGFloat normalizedDeltaX = deltaX / HIDGCMouseRelativeSpeedDivisor;
-                CGFloat normalizedDeltaY = deltaY / HIDGCMouseRelativeSpeedDivisor;
-                CGFloat sensitivity = HIDPointerSensitivityForHost(me.host);
-                short moveX = HIDScaledRelativeDelta(normalizedDeltaX, sensitivity);
-                short moveY = HIDScaledRelativeDelta(normalizedDeltaY, sensitivity);
-                [me recordRelativeInputDiagnosticsFrom:@"gcMouse"
-                                             rawDeltaX:deltaX
-                                             rawDeltaY:deltaY
-                                            sentDeltaX:moveX
-                                            sentDeltaY:moveY
-                                            suppressed:NO];
-                HIDDispatchInput(me, inputCtx, ^{
-                    LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
-                });
-                [SettingsClass updateMouseInputRuntimeStatusFor:me.host.uuid
-                                                    summaryKey:@"Mouse Runtime Path GameController Active"
-                                                     detailKey:@"Mouse Runtime Detail GameController Active"];
-            }
-        }
-    }
+    HIDFlushAccumulatedGCMouseDeltas(me);
     
     // Mouse Emulation Movement
     if (me.controller.isMouseMode && me.shouldSendInputEvents) {

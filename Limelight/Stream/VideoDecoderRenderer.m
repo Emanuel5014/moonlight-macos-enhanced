@@ -2447,10 +2447,11 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     }
 
     if (_framePacingMode == 0) {
-        target = MIN(target, 1);
-        if (_smoothnessLatencyMode == 0) {
-            target = 0;
-        }
+        // "Lowest Latency" pacing disables the pacing holdback entirely so each
+        // decoded frame is presented without waiting for the next one to arrive.
+        // This matches moonlight-qt, which renders immediately when frame pacing
+        // is off. Vsync/compatibility floors below still apply.
+        target = 0;
     }
 
     if (_timingResponsivenessBias >= 2) {

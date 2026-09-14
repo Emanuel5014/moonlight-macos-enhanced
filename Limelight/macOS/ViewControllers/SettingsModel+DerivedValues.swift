@@ -1402,7 +1402,11 @@ extension SettingsModel {
       timingCompatibilityMode = false
       timingSdrCompatibilityWorkaround = false
     case Self.smoothnessLatencyBalanced:
-      selectedPacingOptions = Self.defaultPacingOptions
+      // Default profile favors responsiveness like moonlight-qt (which leaves
+      // frame pacing off): no pacing holdback. Users who prefer buttery
+      // smoothness can still pick "Smoothest Video" or the Smoothness First
+      // profile explicitly.
+      selectedPacingOptions = Self.pacingOptions.first ?? Self.defaultPacingOptions
       enableVsync = false
       selectedTimingBufferLevel = Self.timingBufferStandard
       timingPrioritizeResponsiveness = false
