@@ -820,6 +820,21 @@
 "More" = "更多";
 "Close and Quit App" = "关闭并退出应用";
 "Disconnect from Stream" = "退出串流";
+/* Follow-up to upstream PR #44 (ste94pz): Chinese translations for the new
+   canonical English keys that replaced our previous labels, reusing the
+   existing translations so zh-Hans keeps full coverage. */
+"Reconnect" = "重连";
+"Windowed" = "窗口模式";
+"Fullscreen" = "全屏模式";
+"Borderless Windowed" = "无边框窗口";
+"Show Fullscreen Control Ball" = "全屏显示悬浮球";
+"Display" = "屏幕";
+"Match Display" = "跟随显示器";
+"Custom…" = "自定义…";
+"Current (Custom): %dx%d" = "当前 (自定义)：%dx%d";
+"Current: %d FPS" = "当前：%d FPS";
+"Show Logs" = "显示日志";
+"Exit Stream" = "退出串流";
 "Press and hold modifier keys to release mouse" = "长按修饰键释放鼠标";
 "Move mouse outside window to release" = "把鼠标移到窗口外即可释放";
 "Show control center to release mouse" = "打开控制中心释放鼠标";
