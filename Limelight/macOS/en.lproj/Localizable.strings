@@ -773,7 +773,7 @@
 "Clipboard" = "Clipboard";
 "Clipboard Sync" = "Clipboard Sync";
 "Clipboard Sync detail" = "Automatically syncs text and one image while this stream owns clipboard sync.";
-"Clipboard Sync Foundation detail" = "Available for Foundation Sunshine hosts. Supported hosts default to Auto Sync, and unsupported hosts simply ignore it.";
+"Clipboard Sync Foundation detail" = "Available for Foundation Sunshine hosts, and for Apollo-family hosts (Apollo, Vibepollo) via text-only HTTP sync. Supported hosts default to Auto Sync, and unsupported hosts simply ignore it.";
 "Auto Sync" = "Auto Sync";
 
 /* In-Stream Control Center / Overlay Menu */
@@ -829,7 +829,7 @@
 /* Network Permission Manager dialogs */
 "Gatekeeper Blocked" = "Gatekeeper Blocked Moonlight";
 "Gatekeeper blocked Moonlight" = "macOS security mechanisms are preventing Moonlight from running.";
-"Gatekeeper blocked informative" = "Do the following:\n\n1. Open System Settings → Privacy & Security\n2. Scroll down to the block notice for Moonlight\n3. Click Open Anyway\n4. Click Open in the confirmation dialog\n\nAlternatively: Right-click Moonlight.app → Open → Confirm.";
+"Gatekeeper blocked informative" = "Do the following:\n\n1. Open System Settings → Privacy & Security\n2. Scroll down to the block notice for Moonlight Enhanced\n3. Click Open Anyway\n4. Click Open in the confirmation dialog\n\nAlternatively: Right-click Moonlight Enhanced.app → Open → Confirm.";
 "Network Permission Required" = "Local Network Access Required";
 "Moonlight needs local network access" = "Moonlight needs access to your local network to discover and connect to your game host.";
 "Local network permission informative" = "Do the following:\n\n1. Open System Settings → Privacy & Security → Local Network\n2. Find Moonlight and enable the toggle\n3. Restart Moonlight";

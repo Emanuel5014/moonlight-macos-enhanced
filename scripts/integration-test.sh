@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="${0:A:h}"
 PROJECT_DIR="${SCRIPT_DIR:h}"
 
-APP_PATH="${1:-${PROJECT_DIR}/build/xcode/derivedData/Build/Products/Release/Moonlight.app}"
+APP_PATH="${1:-${PROJECT_DIR}/build/xcode/derivedData/Build/Products/Release/Moonlight Enhanced.app}"
 PASS=0
 FAIL=0
 
@@ -31,7 +31,7 @@ assert_contains() {
   fi
 }
 
-echo "=== Integration Test: Moonlight.app ==="
+echo "=== Integration Test: Moonlight Enhanced.app ==="
 echo ""
 
 if [[ ! -d "$APP_PATH" ]]; then
@@ -39,8 +39,12 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
+# Executable name comes from the built Info.plist so app renames don't break this script.
+EXEC_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "Moonlight Enhanced")
+APP_BASENAME=$(basename "$APP_PATH")
+
 echo "1. Bundle structure"
-assert_exists "$APP_PATH/Contents/MacOS/Moonlight" "Executable exists"
+assert_exists "$APP_PATH/Contents/MacOS/$EXEC_NAME" "Executable exists ($EXEC_NAME)"
 assert_exists "$APP_PATH/Contents/Info.plist" "Info.plist exists"
 assert_exists "$APP_PATH/Contents/Resources" "Resources directory exists"
 assert_exists "$APP_PATH/Contents/Frameworks" "Frameworks directory exists"
@@ -68,7 +72,7 @@ echo "  Info: $SIGN_IDENTITY"
 
 echo ""
 echo "4. Executable architecture"
-ARCH=$(file "$APP_PATH/Contents/MacOS/Moonlight" 2>/dev/null)
+ARCH=$(file "$APP_PATH/Contents/MacOS/$EXEC_NAME" 2>/dev/null)
 echo "  Info: $ARCH"
 if echo "$ARCH" | grep -q "Mach-O"; then
   echo "  PASS: Valid Mach-O binary"
@@ -83,10 +87,10 @@ echo "5. Launch test (5 second smoke test)"
 open -n "$APP_PATH" 2>/dev/null
 sleep 5
 
-if pgrep -f "Moonlight.app/Contents/MacOS/Moonlight" >/dev/null 2>&1; then
+if pgrep -f "$APP_BASENAME/Contents/MacOS/$EXEC_NAME" >/dev/null 2>&1; then
   echo "  PASS: App launched and running"
   PASS=$((PASS + 1))
-  pkill -f "Moonlight.app/Contents/MacOS/Moonlight" 2>/dev/null || true
+  pkill -f "$APP_BASENAME/Contents/MacOS/$EXEC_NAME" 2>/dev/null || true
   sleep 1
 else
   echo "  FAIL: App did not stay running"

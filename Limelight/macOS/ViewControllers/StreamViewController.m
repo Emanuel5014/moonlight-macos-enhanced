@@ -7,6 +7,8 @@
 //
 
 #import "StreamViewController_Internal.h"
+#import "HttpManager.h"
+#import "IdManager.h"
 
 static NSScreen *MLScreenContainingMouseLocation(void) {
     NSPoint mouseLocation = [NSEvent mouseLocation];
@@ -21,6 +23,7 @@ static NSScreen *MLScreenContainingMouseLocation(void) {
 static const NSTimeInterval MLClipboardMonitorInterval = 0.25;
 static const NSUInteger MLClipboardImageSizeLimit = 4 * 1024 * 1024;
 static const uint64_t MLClipboardActivationRepeatLogIntervalMs = 1000;
+static const uint64_t MLApolloClipboardPollIntervalMs = 1000;
 static const uint64_t MLClipboardControlStartupGraceMs = 500;
 static const uint64_t MLClipboardFNVOffsetBasis = 14695981039346656037ULL;
 static const uint64_t MLClipboardFNVPrime = 1099511628211ULL;
@@ -1865,6 +1868,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
     self.clipboardSessionBound = NO;
     self.clipboardHasPendingEchoSuppressionHash = NO;
     self.clipboardPendingEchoSuppressionHash = 0;
+    [self resetApolloClipboardState];
     [self resetClipboardActivationDiagnosticState];
 
     if (shouldRequestUnbind && connection != nil) {
@@ -1931,10 +1935,17 @@ highFreqMotor:(unsigned short)highFreqMotor {
         return;
     }
 
+    if (self.apolloClipboardActive) {
+        [self resetClipboardActivationDiagnosticState];
+        [self startClipboardMonitorIfNeeded];
+        return;
+    }
+
     [self resetClipboardActivationDiagnosticState];
     int bindErr = [connection bindClipboardSession];
     if (bindErr == LI_ERR_UNSUPPORTED) {
         Log(LOG_I, @"[clipboard] Host does not advertise clipboard sync");
+        [self tryApolloClipboardFallback];
         return;
     }
     if (bindErr != 0) {
@@ -2006,6 +2017,11 @@ highFreqMotor:(unsigned short)highFreqMotor {
 
     if (![self isClipboardSyncOwner]) {
         [self stopClipboardMonitor];
+        return;
+    }
+
+    if (self.apolloClipboardActive) {
+        [self apolloClipboardTick];
         return;
     }
 
@@ -2153,6 +2169,233 @@ highFreqMotor:(unsigned short)highFreqMotor {
         itemType,
         (unsigned long)payload.length,
         itemName ?: @"");
+}
+
+// --- Apollo-family HTTP clipboard transport (Vibepollo/Apollo) ---
+//
+// These hosts do not advertise the standard GameStream clipboard control
+// session. Instead they expose GET/POST https://host:port/actions/clipboard
+// (text only), authenticated with the paired client certificate. The host
+// requires an active stream session plus clipboard_read (GET) /
+// clipboard_set (POST) client permissions. All calls below run on the main
+// thread; network I/O is async via HttpManager ephemeral sessions.
+
+- (void)resetApolloClipboardState {
+    self.apolloClipboardActive = NO;
+    self.apolloClipboardProbeDone = NO;
+    self.apolloClipboardSeeded = NO;
+    self.apolloClipboardLastPollMs = 0;
+    self.apolloClipboardLastRemoteHash = 0;
+    self.apolloClipboardPermissionWarned = NO;
+    self.apolloClipboardManager = nil;
+}
+
+- (void)logApolloClipboardPermissionHint {
+    if (self.apolloClipboardPermissionWarned) {
+        return;
+    }
+    self.apolloClipboardPermissionWarned = YES;
+    Log(LOG_W, @"[clipboard] Apollo host denied clipboard access (HTTP 401). In the Vibepollo/Apollo Web UI, open Client Management for this client and grant the Read Clipboard and Write Clipboard permissions, then copy again.");
+}
+
+- (void)tryApolloClipboardFallback {
+    if (self.apolloClipboardProbeDone) {
+        return;
+    }
+    self.apolloClipboardProbeDone = YES;
+    if (![self isClipboardSyncOwner] || self.stopStreamInProgress || self.reconnectInProgress) {
+        return;
+    }
+    NSString *address = self.app.host.activeAddress;
+    if (address.length == 0 || self.app.host.serverCert.length == 0) {
+        Log(LOG_I, @"[clipboard] Skipping Apollo clipboard probe (missing host address or certificate)");
+        return;
+    }
+    HttpManager *manager = [[HttpManager alloc] initWithHost:address
+                                                    uniqueId:[IdManager getUniqueId]
+                                                  serverCert:self.app.host.serverCert];
+    self.apolloClipboardManager = manager;
+    __weak typeof(self) weakSelf = self;
+    [manager executeRawRequest:[manager newApolloClipboardGetRequest]
+             completionHandler:^(NSData *data, NSInteger statusCode, NSError *error) {
+        (void)data;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (strongSelf == nil) {
+                return;
+            }
+            if (![strongSelf isClipboardSyncOwner] || ![strongSelf isClipboardSyncEnabledForCurrentHost]) {
+                return;
+            }
+            if (error != nil || (statusCode != 200 && statusCode != 401 && statusCode != 403)) {
+                Log(LOG_I, @"[clipboard] No Apollo clipboard endpoint (status=%ld err=%@); standard clipboard path stays inactive",
+                    (long)statusCode, error.localizedDescription ?: @"none");
+                strongSelf.apolloClipboardManager = nil;
+                return;
+            }
+            strongSelf.apolloClipboardActive = YES;
+            strongSelf.apolloClipboardSeeded = NO;
+            strongSelf.apolloClipboardLastPollMs = 0;
+            strongSelf.apolloClipboardLastRemoteHash = 0;
+            strongSelf.apolloClipboardPermissionWarned = NO;
+            Log(LOG_I, @"[clipboard] Apollo HTTP clipboard transport active (probe status=%ld, text only)", (long)statusCode);
+            if (statusCode == 401) {
+                [strongSelf logApolloClipboardPermissionHint];
+            }
+            [strongSelf startClipboardMonitorIfNeeded];
+        });
+    }];
+}
+
+- (void)apolloClipboardTick {
+    if (![self isClipboardSyncEnabledForCurrentHost]) {
+        [self releaseClipboardSyncOwnershipWithUnbind:YES];
+        return;
+    }
+    if (![self isClipboardSyncOwner]) {
+        [self stopClipboardMonitor];
+        [self resetApolloClipboardState];
+        return;
+    }
+    [self apolloPushLocalClipboardTextIfNeeded];
+    uint64_t nowMs = [self nowMs];
+    if (nowMs - self.apolloClipboardLastPollMs >= MLApolloClipboardPollIntervalMs) {
+        self.apolloClipboardLastPollMs = nowMs;
+        [self apolloPollRemoteClipboard];
+    }
+}
+
+- (void)apolloPushLocalClipboardTextIfNeeded {
+    HttpManager *manager = self.apolloClipboardManager;
+    if (manager == nil) {
+        return;
+    }
+    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+    NSInteger changeCount = pasteboard.changeCount;
+    if (changeCount == self.clipboardLastChangeCount) {
+        return;
+    }
+
+    NSString *text = [pasteboard stringForType:NSPasteboardTypeString];
+    if (text == nil) {
+        // The Apollo extension is text-only: ignore other payloads but advance
+        // the baseline so we don't hot-loop on them.
+        self.clipboardLastChangeCount = changeCount;
+        Log(LOG_I, @"[clipboard] Ignoring non-text local clipboard (Apollo transport is text-only)");
+        return;
+    }
+    text = MLNormalizeClipboardText(text);
+    NSData *textData = [text dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+    uint64_t contentHash = MLComputeClipboardHash(LI_CLIPBOARD_ITEM_TYPE_TEXT, textData, nil);
+    if (self.clipboardHasPendingEchoSuppressionHash &&
+        self.clipboardPendingEchoSuppressionHash == contentHash) {
+        self.clipboardLastChangeCount = changeCount;
+        self.clipboardHasPendingEchoSuppressionHash = NO;
+        self.clipboardPendingEchoSuppressionHash = 0;
+        Log(LOG_I, @"[clipboard] Suppressed echoed local clipboard item hash=%llu", contentHash);
+        return;
+    }
+
+    __weak typeof(self) weakSelf = self;
+    [manager executeRawRequest:[manager newApolloClipboardSetRequestWithText:text]
+             completionHandler:^(NSData *data, NSInteger statusCode, NSError *error) {
+        (void)data;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (strongSelf == nil) {
+                return;
+            }
+            // Change-driven like the standard path: always advance the baseline
+            // so a failing host can't cause a hot retry loop; failures are logged.
+            strongSelf.clipboardLastChangeCount = changeCount;
+            if (error != nil || (statusCode != 200 && statusCode != 204)) {
+                if (statusCode == 401) {
+                    [strongSelf logApolloClipboardPermissionHint];
+                } else {
+                    Log(LOG_W, @"[clipboard] Apollo clipboard push failed (status=%ld err=%@)",
+                        (long)statusCode, error.localizedDescription ?: @"none");
+                }
+                return;
+            }
+            strongSelf.clipboardHasPendingEchoSuppressionHash = YES;
+            strongSelf.clipboardPendingEchoSuppressionHash = contentHash;
+            [strongSelf resetClipboardActivationDiagnosticState];
+            Log(LOG_I, @"[clipboard] Pushed local clipboard text to Apollo host (%lu bytes)", (unsigned long)textData.length);
+        });
+    }];
+}
+
+- (void)apolloPollRemoteClipboard {
+    HttpManager *manager = self.apolloClipboardManager;
+    if (manager == nil) {
+        return;
+    }
+    __weak typeof(self) weakSelf = self;
+    [manager executeRawRequest:[manager newApolloClipboardGetRequest]
+             completionHandler:^(NSData *data, NSInteger statusCode, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (strongSelf == nil ||
+                ![strongSelf isClipboardSyncOwner] ||
+                ![strongSelf isClipboardSyncEnabledForCurrentHost] ||
+                !strongSelf.apolloClipboardActive) {
+                return;
+            }
+            if (error != nil) {
+                return; // transient network blip; retry on next poll
+            }
+            if (statusCode == 401) {
+                [strongSelf logApolloClipboardPermissionHint];
+                return;
+            }
+            if (statusCode == 404) {
+                Log(LOG_W, @"[clipboard] Apollo clipboard endpoint disappeared; disabling Apollo transport");
+                strongSelf.apolloClipboardActive = NO;
+                strongSelf.apolloClipboardManager = nil;
+                return;
+            }
+            if (statusCode != 200 || data == nil) {
+                return;
+            }
+            NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            if (text == nil) {
+                Log(LOG_W, @"[clipboard] Failed to decode Apollo clipboard payload as UTF-8");
+                return;
+            }
+            text = MLNormalizeClipboardText(text);
+            NSData *textData = [text dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+            uint64_t contentHash = MLComputeClipboardHash(LI_CLIPBOARD_ITEM_TYPE_TEXT, textData, nil);
+            if (!strongSelf.apolloClipboardSeeded) {
+                // First successful poll only seeds the baseline: no local writes
+                // and no host pushes, so nothing is clobbered on connect.
+                strongSelf.apolloClipboardSeeded = YES;
+                strongSelf.apolloClipboardLastRemoteHash = contentHash;
+                Log(LOG_I, @"[clipboard] Apollo clipboard baseline seeded (%lu bytes)", (unsigned long)textData.length);
+                return;
+            }
+            if (contentHash == strongSelf.apolloClipboardLastRemoteHash) {
+                return;
+            }
+            if (strongSelf.clipboardHasPendingEchoSuppressionHash &&
+                strongSelf.clipboardPendingEchoSuppressionHash == contentHash) {
+                // Our own push echoed back: absorb without rewriting local pasteboard.
+                strongSelf.apolloClipboardLastRemoteHash = contentHash;
+                strongSelf.clipboardHasPendingEchoSuppressionHash = NO;
+                strongSelf.clipboardPendingEchoSuppressionHash = 0;
+                return;
+            }
+            strongSelf.apolloClipboardLastRemoteHash = contentHash;
+            MLClipboardItemSnapshot *snapshot = [[MLClipboardItemSnapshot alloc] init];
+            snapshot.type = LI_CLIPBOARD_ITEM_TYPE_TEXT;
+            snapshot.data = textData;
+            snapshot.mimeType = @"text/plain;charset=utf-8";
+            snapshot.name = nil;
+            snapshot.itemId = MLGenerateClipboardItemId();
+            snapshot.contentHash = contentHash;
+            snapshot.flags = 0;
+            [strongSelf applyReceivedClipboardSnapshot:snapshot];
+        });
+    }];
 }
 
 - (void)applyReceivedClipboardSnapshot:(MLClipboardItemSnapshot *)item {

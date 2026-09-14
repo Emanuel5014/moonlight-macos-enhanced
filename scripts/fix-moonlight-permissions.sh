@@ -1,17 +1,17 @@
 #!/bin/bash
-# Fix Moonlight macOS Gatekeeper and TCC permissions
-# Run AFTER copying Moonlight.app to /Applications
+# Fix Moonlight Enhanced macOS Gatekeeper and TCC permissions
+# Run AFTER copying Moonlight Enhanced.app to /Applications
 # Usage: bash scripts/fix-moonlight-permissions.sh
 
-APP_PATH="/Applications/Moonlight.app"
+APP_PATH="/Applications/Moonlight Enhanced.app"
 BUNDLE_ID="std.skyhua.MoonlightMac2"
 
-echo "=== Moonlight 权限修复脚本 ==="
+echo "=== Moonlight Enhanced 权限修复脚本 ==="
 echo ""
 
 if [ ! -d "$APP_PATH" ]; then
     echo "错误: 未找到 $APP_PATH"
-    echo "请先将 Moonlight.app 复制到 /Applications"
+    echo "请先将 Moonlight Enhanced.app 复制到 /Applications"
     exit 1
 fi
 
@@ -48,10 +48,10 @@ else
     echo "   Gatekeeper: ❌ 被拒绝"
     echo ""
     echo "   请执行以下操作之一："
-    echo "   方法 A (推荐): 右键点击 Moonlight → 打开 → 确认"
+     echo "   方法 A (推荐): 右键点击 Moonlight Enhanced → 打开 → 确认"
     echo "   方法 B: 系统设置 → 隐私与安全性 → 点击 '仍要打开' 按钮"
 fi
 
 echo ""
 echo "=== 修复完成 ==="
-echo "请启动 Moonlight，当弹出网络权限请求时点击 '允许'。"
+echo "请启动 Moonlight Enhanced，当弹出网络权限请求时点击 '允许'。"

@@ -33,5 +33,16 @@
 - (NSArray<NSDictionary<NSString*, id>*>*) fetchSunshineDisplays;
 - (void) executeRequestSynchronously:(HttpRequest*)request;
 
+// Apollo-family HTTP clipboard extension (Vibepollo/Apollo, text only).
+// GET/POST <https-base>/actions/clipboard?type=text, authenticated with the
+// paired client certificate. The host requires the stream to be active and
+// the client to hold clipboard_read (GET) / clipboard_set (POST) perms.
+- (NSURLRequest*) newApolloClipboardGetRequest;
+- (NSURLRequest*) newApolloClipboardSetRequestWithText:(NSString*)text;
+// Executes an arbitrary request asynchronously and returns the raw body.
+// The ephemeral session uses this manager as delegate, so paired client-cert
+// auth and pinned server-cert validation behave exactly like other calls.
+- (void) executeRawRequest:(NSURLRequest*)request completionHandler:(void(^)(NSData* _Nullable data, NSInteger statusCode, NSError* _Nullable error))completionHandler;
+
 @end
 

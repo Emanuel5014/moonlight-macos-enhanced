@@ -6,6 +6,7 @@
 #pragma once
 
 #import "StreamViewController.h"
+@class HttpManager;
 #import "StreamingSessionManager.h"
 #import <QuartzCore/QuartzCore.h>
 #import "StreamViewMac.h"
@@ -716,6 +717,16 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) uint64_t clipboardInitialSnapshotDeadlineMs;
 @property (nonatomic) uint64_t clipboardPendingEchoSuppressionHash;
 @property (nonatomic) BOOL clipboardHasPendingEchoSuppressionHash;
+// Apollo-family HTTP clipboard transport (Vibepollo/Apollo text sync via
+// https://host:port/actions/clipboard?type=text). Used when the standard
+// GameStream clipboard control session is not advertised by the host.
+@property (nonatomic, strong) HttpManager *apolloClipboardManager;
+@property (nonatomic) BOOL apolloClipboardActive;
+@property (nonatomic) BOOL apolloClipboardProbeDone;
+@property (nonatomic) BOOL apolloClipboardSeeded;
+@property (nonatomic) uint64_t apolloClipboardLastPollMs;
+@property (nonatomic) uint64_t apolloClipboardLastRemoteHash;
+@property (nonatomic) BOOL apolloClipboardPermissionWarned;
 @property (nonatomic) BOOL spaceTransitionInProgress;
 @property (nonatomic) BOOL fullscreenTransitionInProgress;
 @property (nonatomic) BOOL streamMenuEntrypointsUpdateScheduled;
@@ -777,6 +788,12 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)stopClipboardMonitor;
 - (void)handleClipboardMonitorTick;
 - (void)sendCurrentLocalClipboardIfNeeded;
+- (void)resetApolloClipboardState;
+- (void)tryApolloClipboardFallback;
+- (void)apolloClipboardTick;
+- (void)apolloPushLocalClipboardTextIfNeeded;
+- (void)apolloPollRemoteClipboard;
+- (void)logApolloClipboardPermissionHint;
 
 @end
 

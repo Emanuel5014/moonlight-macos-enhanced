@@ -21,7 +21,7 @@ for arg in "$@"; do
 done
 
 DERIVED_DATA_DIR="${PROJECT_DIR}/build/xcode/derivedData"
-APP_PATH="${DERIVED_DATA_DIR}/Build/Products/${CONFIGURATION}/Moonlight.app"
+APP_PATH="${DERIVED_DATA_DIR}/Build/Products/${CONFIGURATION}/Moonlight Enhanced.app"
 
 # Step 1: Download frameworks if needed
 if [[ "$SKIP_DEPS" -eq 0 ]]; then

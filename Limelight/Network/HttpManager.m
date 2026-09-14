@@ -400,6 +400,38 @@ static const NSString* HTTPS_PORT = @"47984";
     return [self createRequestFromString:urlString timeout:NORMAL_TIMEOUT_SEC];
 }
 
+- (NSURLRequest*)newApolloClipboardGetRequest {
+    NSString *urlString = [NSString stringWithFormat:@"%@/actions/clipboard?type=text", _baseHTTPSURL];
+    return [self createRequestFromString:urlString timeout:NORMAL_TIMEOUT_SEC];
+}
+
+- (NSURLRequest*)newApolloClipboardSetRequestWithText:(NSString*)text {
+    NSString *urlString = [NSString stringWithFormat:@"%@/actions/clipboard?type=text", _baseHTTPSURL];
+    NSMutableURLRequest *request = [[self createRequestFromString:urlString timeout:NORMAL_TIMEOUT_SEC] mutableCopy];
+    NSData *body = [text dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+    [request setHTTPMethod:@"POST"];
+    [request setValue:@"text/plain; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
+    [request setHTTPBody:body];
+    return request;
+}
+
+- (void)executeRawRequest:(NSURLRequest*)request completionHandler:(void(^)(NSData* _Nullable data, NSInteger statusCode, NSError* _Nullable error))completionHandler {
+    NSURLSessionConfiguration* config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    NSURLSession* urlSession = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:nil];
+
+    NSURLSessionDataTask* task = [urlSession dataTaskWithRequest:request completionHandler:^(NSData * __nullable data, NSURLResponse * __nullable response, NSError * __nullable error) {
+        NSInteger statusCode = 0;
+        if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+            statusCode = [(NSHTTPURLResponse *)response statusCode];
+        }
+        if (completionHandler) {
+            completionHandler(data, statusCode, error);
+        }
+        [urlSession finishTasksAndInvalidate];
+    }];
+    [task resume];
+}
+
 - (NSArray<NSDictionary<NSString*, id>*>*)fetchSunshineDisplays {
     MLSunshineDisplaysResponse *response = [[MLSunshineDisplaysResponse alloc] init];
     HttpRequest *request = [HttpRequest requestForResponse:response withUrlRequest:[self newDisplaysRequest]];
