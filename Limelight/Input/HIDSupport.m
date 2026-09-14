@@ -1042,6 +1042,18 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     };
 
     self.keyboardRemoteModifierMask = desired;
+    // Diagnostic trace for stuck-modifier investigations: logs every remote
+    // modifier transition (low volume — only on actual changes).
+    if (changed != 0) {
+        char prevBuf[32], nextBuf[32];
+        KMR_FormatRemoteMask((KMR_RemoteModifierMask)previous, prevBuf, sizeof(prevBuf));
+        KMR_FormatRemoteMask((KMR_RemoteModifierMask)desired, nextBuf, sizeof(nextBuf));
+        Log(LOG_I, @"[keyboard] modifier sync: phys=0x%lx %s -> %s (type=%lu key=%hu)",
+            (unsigned long)self.keyboardPhysicalModifierSourceMask,
+            prevBuf, nextBuf,
+            (unsigned long)(event != nil ? event.type : 0),
+            event != nil ? event.keyCode : 0);
+    }
     HIDDispatchInput(self, inputCtx, ^{
         for (NSUInteger i = 0; i < sizeof(remoteOrder) / sizeof(remoteOrder[0]); i++) {
             HIDKeyboardRemoteModifierMask mask = remoteOrder[i];
